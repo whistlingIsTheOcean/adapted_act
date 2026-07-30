@@ -1,11 +1,20 @@
 import pathlib
 
 ### Task parameters
-DATA_DIR = '<put your data dir here>'
+DATA_DIR = 'E:/Adapted_ACT/adapted_act'
 SIM_TASK_CONFIGS = {
+    #新增我们的数据集
+    'push_block':{
+        'dataset_dir': DATA_DIR + '/push_block',
+                'num_episodes': 50,
+                'episode_len': 400,#需要查明每一集实验的长度或怎么用os读取其不定长
+                'camera_names': ['043322070878',
+                                 '750612070851']
+    },
+    
     'sim_transfer_cube_scripted':{
-        'dataset_dir': DATA_DIR + '/sim_transfer_cube_scripted',
-        'num_episodes': 50,
+        'dataset_dir': DATA_DIR ,#+ '/sim_transfer_cube_scripted',
+        'num_episodes': 10,
         'episode_len': 400,
         'camera_names': ['top']
     },

@@ -64,6 +64,7 @@ class BimanualViperXTask(base.Task):
         left_gripper_action = PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(normalized_left_gripper_action)
         right_gripper_action = PUPPET_GRIPPER_POSITION_UNNORMALIZE_FN(normalized_right_gripper_action)
 
+        # TODO 这里是两个夹爪的。修改。
         full_left_gripper_action = [left_gripper_action, -left_gripper_action]
         full_right_gripper_action = [right_gripper_action, -right_gripper_action]
 

@@ -55,7 +55,7 @@ class DETRVAE(nn.Module):
         if backbones is not None:
             self.input_proj = nn.Conv2d(backbones[0].num_channels, hidden_dim, kernel_size=1)
             self.backbones = nn.ModuleList(backbones)
-            self.input_proj_robot_state = nn.Linear(14, hidden_dim)
+            self.input_proj_robot_state = nn.Linear(state_dim, hidden_dim)#这里我把14改为state_dim
         else:
             # input_dim = 14 + 7 # robot_state + env_state
             self.input_proj_robot_state = nn.Linear(14, hidden_dim)
@@ -227,7 +227,7 @@ def build_encoder(args):
 
 
 def build(args):
-    state_dim = 14 # TODO hardcode
+    state_dim = args.state_dim # 这里从硬编码改为传参
 
     # From state
     # backbone = None # from state for now, no need for conv nets

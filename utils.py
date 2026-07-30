@@ -4,50 +4,96 @@ import os
 import h5py
 from torch.utils.data import TensorDataset, DataLoader
 
+import json
+from transformation import rot_trans_mat, apply_mat_to_pose, apply_mat_to_pcd, xyz_rot_transform
+from PIL import Image
+
 import IPython
 e = IPython.embed
+
 
 class EpisodicDataset(torch.utils.data.Dataset):
     def __init__(self, episode_ids, dataset_dir, camera_names, norm_stats):
         super(EpisodicDataset).__init__()
         self.episode_ids = episode_ids
         self.dataset_dir = dataset_dir
-        self.camera_names = camera_names
+        self.camera_names = camera_names #以cam_id为名
         self.norm_stats = norm_stats
-        self.is_sim = None
-        self.__getitem__(0) # initialize self.is_sim
+        self.is_sim = True
+        #self.__getitem__(0) # initialize self.is_sim
 
     def __len__(self):
         return len(self.episode_ids)
 
     def __getitem__(self, index):
         sample_full_episode = False # hardcode
-
+        #目的：每次选取一个demo,抽选合法的strat_ts并得到带掩码的动作序列 位置序列
         episode_id = self.episode_ids[index]
-        dataset_path = os.path.join(self.dataset_dir, f'episode_{episode_id}.hdf5')
-        with h5py.File(dataset_path, 'r') as root:
-            is_sim = root.attrs['sim']
-            original_action_shape = root['/action'].shape
-            episode_len = original_action_shape[0]
-            if sample_full_episode:
-                start_ts = 0
-            else:
-                start_ts = np.random.choice(episode_len)
-            # get observation at start_ts only
-            qpos = root['/observations/qpos'][start_ts]
-            qvel = root['/observations/qvel'][start_ts]
-            image_dict = dict()
-            for cam_name in self.camera_names:
-                image_dict[cam_name] = root[f'/observations/images/{cam_name}'][start_ts]
-            # get all actions after and including start_ts
-            if is_sim:
-                action = root['/action'][start_ts:]
-                action_len = episode_len - start_ts
-            else:
-                action = root['/action'][max(0, start_ts - 1):] # hack, to make timesteps more aligned
-                action_len = episode_len - max(0, start_ts - 1) # hack, to make timesteps more aligned
+        demo_path=os.path.join(self.dataset_dir,sorted(os.listdir(os.path.join(self.dataset_dir,'train')))[episode_id])
+        with open(os.path.join(demo_path, "metadata.json"), "r") as f:
+                            meta = json.load(f)
+        #tcp gripper使用第一个相机的文件夹
+        cam_path=os.path.join(demo_path,f"cam_{self.camera_names[0]}")
+        
+        #get frame ids for each camera
+        master_frame_ids = [
+                int(os.path.splitext(x)[0]) 
+                for x in sorted(os.listdir(os.path.join(demo_path,f"cam_{self.camera_names[0]}", "color"))) 
+                if int(os.path.splitext(x)[0]) <= meta["finish_time"]
+            ]
+        slave_frame_ids = [
+                        int(os.path.splitext(x)[0]) 
+                        for x in sorted(os.listdir(os.path.join(demo_path,f"cam_{self.camera_names[1]}", "color"))) 
+                        if int(os.path.splitext(x)[0]) <= meta["finish_time"]
+                    ]
+        episode_len=len(master_frame_ids)-1
+        
+        
+        # merge tcp data and gripper data to get action data
+        if sample_full_episode:
+            start_ts = 0
+        else:
+            start_ts = np.random.choice(episode_len)
+        all_tcp_data=[]
+        all_gripper_data=[]
+        tcp_path=os.path.join(cam_path,'tcp')
+        gripper_path=os.path.join(cam_path,'gripper_command')
+        for cur_idx in range(len(master_frame_ids) - 1):
+                    tcp=np.load(os.path.join(tcp_path,f'{master_frame_ids[cur_idx]}.npy'))
+                    gripper=np.load(os.path.join(gripper_path,f'{master_frame_ids[cur_idx]}.npy'))
+                    all_tcp_data.append(tcp[:7])
+                    all_gripper_data.append(decode_gripper_width(gripper[0]))
+        all_tcp_data=np.stack(all_tcp_data)
+        all_gripper_data=np.stack(all_gripper_data)            
+            
+        # rotation transformation (to 6d)复用RISE
+        all_tcp_data=xyz_rot_transform(all_tcp_data, from_rep = "quaternion", to_rep = "rotation_6d")
+        all_action_data = np.concatenate((all_tcp_data, all_gripper_data[..., np.newaxis]), axis = -1)# (N, 10)
+        
+        # get observation at start_ts only
+        qpos=all_action_data[start_ts]
 
+        image_dict = dict()
+        
+        # 对于全局相机，时间戳与图片对应；对于腕部相机，找到当前start ts索引的时间戳最近的时间戳的图像
+        master_id=master_frame_ids[start_ts]
+        image_dict[self.camera_names[0]] = np.array(Image.open(os.path.join(demo_path,f"cam_{self.camera_names[0]}", "color", f"{master_id}.png"))
+        )
+        slave_frame_ids_np=np.array(slave_frame_ids)
+        counterpart_start_ts = np.argmin(np.abs(slave_frame_ids_np - master_id))
+        slave_id=slave_frame_ids[counterpart_start_ts]
+        image_dict[self.camera_names[1]] = np.array(Image.open(os.path.join(demo_path,f"cam_{self.camera_names[1]}", "color", f"{slave_id}.png"))),image_dict[self.camera_names[0]].shape
+            
+        
+        # get all actions after and including start_ts
+        action = all_action_data[max(0, start_ts - 1):] # hack, to make timesteps more aligned
+        action_len = episode_len - max(0, start_ts - 1) # hack, to make timesteps more aligned
+        original_action_shape = all_action_data.shape
+        
+        # create mask padding
+        is_sim = True
         self.is_sim = is_sim
+        
         padded_action = np.zeros(original_action_shape, dtype=np.float32)
         padded_action[:action_len] = action
         is_pad = np.zeros(episode_len)
@@ -76,34 +122,67 @@ class EpisodicDataset(torch.utils.data.Dataset):
         return image_data, qpos_data, action_data, is_pad
 
 
-def get_norm_stats(dataset_dir, num_episodes):
-    all_qpos_data = []
-    all_action_data = []
-    for episode_idx in range(num_episodes):
-        dataset_path = os.path.join(dataset_dir, f'episode_{episode_idx}.hdf5')
-        with h5py.File(dataset_path, 'r') as root:
-            qpos = root['/observations/qpos'][()]
-            qvel = root['/observations/qvel'][()]
-            action = root['/action'][()]
-        all_qpos_data.append(torch.from_numpy(qpos))
-        all_action_data.append(torch.from_numpy(action))
-    all_qpos_data = torch.stack(all_qpos_data)
-    all_action_data = torch.stack(all_action_data)
-    all_action_data = all_action_data
+def get_norm_stats(dataset_dir, num_episodes,split,cam_ids):
+    #all_qpos_data = []
+    #all_action_data = []
+    
+    all_tcp_data=[]
+    all_gripper_data=[]
+    
+    #目的：遍历所有demo,拿到npy并整合、统计全局统计量
+    dataset_path= os.path.join(dataset_dir, split)
+    all_demos = sorted(os.listdir(dataset_path))
+    num_demos = len(all_demos)
+    for i in range(num_demos):
+        demo_path=os.path.join(dataset_path,all_demos[i])
+        #两个摄像头的tcp gripper数据实际上是同一套 所以只读全局相机的
+        cam_id  =cam_ids[0]
+        cam_path=os.path.join(demo_path,f'cam_{cam_id}')
+        if not os.path.exists(cam_path):
+            continue
+        tcp_path=os.path.join(cam_path,'tcp')
+        gripper_path=os.path.join(cam_path,'gripper_command')
+        with open(os.path.join(demo_path, "metadata.json"), "r") as f:
+                meta = json.load(f)
+        frame_ids = [
+                int(os.path.splitext(x)[0]) 
+                for x in sorted(os.listdir(os.path.join(cam_path, "color"))) 
+                if int(os.path.splitext(x)[0]) <= meta["finish_time"]
+            ]
+        for cur_idx in range(len(frame_ids) - 1):
+            tcp=np.load(os.path.join(tcp_path,f'{frame_ids[cur_idx]}.npy'))
+            gripper=np.load(os.path.join(gripper_path,f'{frame_ids[cur_idx]}.npy'))
+            all_tcp_data.append(tcp[:7])
+            all_gripper_data.append(decode_gripper_width(gripper[0]))
+    all_tcp_data=np.stack(all_tcp_data)
+    all_gripper_data=np.stack(all_gripper_data)            
+    
+    # rotation transformation (to 6d)复用RISE
+    all_tcp_data=xyz_rot_transform(all_tcp_data, from_rep = "quaternion", to_rep = "rotation_6d")
+    all_action_data = np.concatenate((all_tcp_data, all_gripper_data[..., np.newaxis]), axis = -1)# (N, 10)
+
 
     # normalize action data
-    action_mean = all_action_data.mean(dim=[0, 1], keepdim=True)
-    action_std = all_action_data.std(dim=[0, 1], keepdim=True)
-    action_std = torch.clip(action_std, 1e-2, np.inf) # clipping
+    action_mean = all_action_data.mean(axis=0, keepdim=True)
+    action_std = all_action_data.std(axis=0, keepdim=True)
+    action_std = np.clip(action_std, 1e-2, np.inf) # clipping
 
     # normalize qpos data
-    qpos_mean = all_qpos_data.mean(dim=[0, 1], keepdim=True)
-    qpos_std = all_qpos_data.std(dim=[0, 1], keepdim=True)
-    qpos_std = torch.clip(qpos_std, 1e-2, np.inf) # clipping
+    #qpos_mean = all_qpos_data.mean(dim=[0, 1], keepdim=True)
+    #qpos_std = all_qpos_data.std(dim=[0, 1], keepdim=True)
+    #qpos_std = torch.clip(qpos_std, 1e-2, np.inf) # clipping
+    qpos_mean=action_mean.copy()
+    qpos_std=action_std.copy()
 
+    qpos=all_action_data[0]
+    
     stats = {"action_mean": action_mean.numpy().squeeze(), "action_std": action_std.numpy().squeeze(),
              "qpos_mean": qpos_mean.numpy().squeeze(), "qpos_std": qpos_std.numpy().squeeze(),
              "example_qpos": qpos}
+    
+    print("action_mean shape:", action_mean.shape)  # (10,)
+    print("action_std shape:", action_std.shape)    
+    print("example_qpos shape:", qpos.shape) 
 
     return stats
 
@@ -112,12 +191,16 @@ def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_s
     print(f'\nData from: {dataset_dir}\n')
     # obtain train test split
     train_ratio = 0.8
+    #由于每个demo是变长的，indices要为每个episode_len独立生成
     shuffled_indices = np.random.permutation(num_episodes)
     train_indices = shuffled_indices[:int(train_ratio * num_episodes)]
     val_indices = shuffled_indices[int(train_ratio * num_episodes):]
 
+    split='train'
+    assert split in ['train', 'val', 'all']
+    
     # obtain normalization stats for qpos and action
-    norm_stats = get_norm_stats(dataset_dir, num_episodes)
+    norm_stats = get_norm_stats(dataset_dir, num_episodes,split,cam_ids=camera_names)
 
     # construct dataset and dataloader
     train_dataset = EpisodicDataset(train_indices, dataset_dir, camera_names, norm_stats)
@@ -187,3 +270,7 @@ def detach_dict(d):
 def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
+
+#复制自RISE，用于夹爪宽度量纲统一
+def decode_gripper_width(gripper_width):
+    return gripper_width / 1000. * 0.095
