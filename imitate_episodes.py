@@ -10,13 +10,20 @@ from einops import rearrange
 
 from constants import DT
 from constants import PUPPET_GRIPPER_JOINT_OPEN
-from utils import load_data # data functions
-from utils import sample_box_pose, sample_insertion_pose # robot functions
-from utils import compute_dict_mean, set_seed, detach_dict # helper functions
+from utils_act import load_data # data functions
+from utils_act import sample_box_pose, sample_insertion_pose # robot functions
+from utils_act import compute_dict_mean, set_seed, detach_dict,decode_gripper_width # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
 from visualize_episodes import save_videos
 
 from sim_env import BOX_POSE
+
+#控制我们的机器
+from eval_agent import Agent,Agent_slave
+from utils.constants import *
+from dataset.projector import Projector
+from utils.ensemble import EnsembleBuffer
+from utils.transformation import rotation_transform ,rot_trans_mat, apply_mat_to_pose, apply_mat_to_pcd, xyz_rot_transform
 
 import IPython
 e = IPython.embed
@@ -36,13 +43,10 @@ def main(args):
     # get task parameters
     #复用sim通路的储存位置和逻辑，储存我们的数据集的参数
     #is_sim = task_name[:4] == 'sim_'
-    is_sim=True
-    if is_sim:
-        from constants import SIM_TASK_CONFIGS
-        task_config = SIM_TASK_CONFIGS[task_name]
-    # else:
-    #     from aloha_scripts.constants import TASK_CONFIGS
-    #     task_config = TASK_CONFIGS[task_name]
+    
+    from constants import SIM_TASK_CONFIGS
+    task_config = SIM_TASK_CONFIGS[task_name]
+    
     dataset_dir = task_config['dataset_dir']
     num_episodes = task_config['num_episodes']
     episode_len = task_config['episode_len']
@@ -89,22 +93,33 @@ def main(args):
         'seed': args['seed'],
         'temporal_agg': args['temporal_agg'],
         'camera_names': camera_names,
-        'real_robot': not is_sim
+        'real_robot': True,
+        
+        'calib':args['calib'],
+        'ensemble_mode':args['ensemble_mode'],
+        'discretize_rotation':args['discretize_rotation']
     }
 
+    
+    
     if is_eval:
         ckpt_names = [f'policy_best.ckpt']
         results = []
         for ckpt_name in ckpt_names:
-            success_rate, avg_return = eval_bc(config, ckpt_name, save_episode=True)
-            results.append([ckpt_name, success_rate, avg_return])
+            avg_return = eval_bc(config, ckpt_name, save_episode=True)
+            results.append([ckpt_name,  avg_return])
 
-        for ckpt_name, success_rate, avg_return in results:
-            print(f'{ckpt_name}: {success_rate=} {avg_return=}')
+        for ckpt_name,  avg_return in results:
+            print(f'{ckpt_name}:  {avg_return=}')
         print()
         exit()
 
-    train_dataloader, val_dataloader, stats, _ = load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val)
+    train_dataloader, val_dataloader, stats, _ ,max_episode_len= load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val)
+    config['episode_len']=max_episode_len
+    #保存加载数据集时统计出的max_episode_len,
+    # TODO 在评估前把这个参数传进args
+    with open(os.path.join(ckpt_dir,"max_episode_len.txt"),'w')  as f:
+        f.write(str(max_episode_len))
 
     # save dataset stats
     if not os.path.isdir(ckpt_dir):
@@ -142,10 +157,10 @@ def make_optimizer(policy_class, policy):
     return optimizer
 
 
-def get_image(ts, camera_names):
-    curr_images = []
+def get_image(obs_dict,camera_names):
+    curr_images = [] 
     for cam_name in camera_names:
-        curr_image = rearrange(ts.observation['images'][cam_name], 'h w c -> c h w')
+        curr_image = rearrange(obs_dict[cam_name], 'h w c -> c h w')
         curr_images.append(curr_image)
     curr_image = np.stack(curr_images, axis=0)
     curr_image = torch.from_numpy(curr_image / 255.0).float().cuda().unsqueeze(0)
@@ -161,7 +176,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
     onscreen_render = config['onscreen_render']
     policy_config = config['policy_config']
     camera_names = config['camera_names']
-    max_timesteps = config['episode_len']
+    max_timesteps = config['episode_len']-1
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
     onscreen_cam = 'angle'
@@ -181,16 +196,31 @@ def eval_bc(config, ckpt_name, save_episode=True):
     pre_process = lambda s_qpos: (s_qpos - stats['qpos_mean']) / stats['qpos_std']
     post_process = lambda a: a * stats['action_std'] + stats['action_mean']
 
-    # load environment
-    if real_robot:
-        from aloha_scripts.robot_utils import move_grippers # requires aloha
-        from aloha_scripts.real_env import make_real_env # requires aloha
-        env = make_real_env(init_node=True)
-        env_max_reward = 0
-    else:
-        from sim_env import make_sim_env
-        env = make_sim_env(task_name)
-        env_max_reward = env.task.max_reward
+    #load environment
+    agent_master = Agent(
+        robot_ip = "192.168.2.100",
+        pc_ip = "192.168.2.35",
+        gripper_port = "/dev/ttyUSB0",
+        camera_serial = camera_names[0]
+    )
+    agent_slave = Agent_slave(
+        camera_serial = camera_names[1]
+    )
+    
+    if config.discretize_rotation:
+        last_rot = np.array(agent_master.ready_rot_6d, dtype = np.float32)
+    projector = Projector(config['calib'])
+    ensemble_buffer = EnsembleBuffer(mode = config['ensemble_mode'])
+    
+    # if real_robot:
+    #     from aloha_scripts.robot_utils import move_grippers # requires aloha
+    #     from aloha_scripts.real_env import make_real_env # requires aloha
+    #     env = make_real_env(init_node=True)
+    #     env_max_reward = 0
+    # else:
+    #     from sim_env import make_sim_env
+    #     env = make_sim_env(task_name)
+    #     env_max_reward = env.task.max_reward
 
     query_frequency = policy_config['num_queries']
     if temporal_agg:
@@ -199,53 +229,69 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
     max_timesteps = int(max_timesteps * 1) # may increase for real-world tasks
 
-    num_rollouts = 50
+    #真机只做一次实验
+    prev_width = None
+    num_rollouts = 1
     episode_returns = []
     highest_rewards = []
     for rollout_id in range(num_rollouts):
         rollout_id += 0
-        ### set task
-        if 'sim_transfer_cube' in task_name:
-            BOX_POSE[0] = sample_box_pose() # used in sim reset
-        elif 'sim_insertion' in task_name:
-            BOX_POSE[0] = np.concatenate(sample_insertion_pose()) # used in sim reset
+        
 
-        ts = env.reset()
-
-        ### onscreen render
-        if onscreen_render:
-            ax = plt.subplot()
-            plt_img = ax.imshow(env._physics.render(height=480, width=640, camera_id=onscreen_cam))
-            plt.ion()
+        ### no onscreen render
+        
 
         ### evaluation loop
         if temporal_agg:
             all_time_actions = torch.zeros([max_timesteps, max_timesteps+num_queries, state_dim]).cuda()
-
+        
+        rewards = []
+        obs_dict={}
         qpos_history = torch.zeros((1, max_timesteps, state_dim)).cuda()
         image_list = [] # for visualization
         qpos_list = []
         target_qpos_list = []
-        rewards = []
+        #rewards = []
         with torch.inference_mode():
             for t in range(max_timesteps):
                 ### update onscreen render and wait for DT
-                if onscreen_render:
-                    image = env._physics.render(height=480, width=640, camera_id=onscreen_cam)
-                    plt_img.set_data(image)
-                    plt.pause(DT)
+                # if onscreen_render:
+                #     image = env._physics.render(height=480, width=640, camera_id=onscreen_cam)
+                #     plt_img.set_data(image)
+                #     plt.pause(DT)
 
                 ### process previous timestep to get qpos and image_list
-                obs = ts.observation
-                if 'images' in obs:
-                    image_list.append(obs['images'])
+                
+                obs_dict['images']={}
+                master_image,_=agent_master.get_observation()
+                slave_image,_=agent_slave.get_observation()
+                obs_dict['images'][camera_names[0]]=master_image
+                obs_dict['images'][camera_names[1]]=slave_image
+                image_list.append(obs_dict['images'])
+                
+                curr_image = get_image(obs_dict['images'], camera_names)
+                #obs = ts.observation
+                # if 'images' in obs_dict:
+                #     image_list.append(obs['images'])
+                # else:
+                #     image_list.append({'main': obs['image']})
+                # qpos_numpy = np.array(obs['qpos'])
+                if t==0:
+                    init_tcp_xyz=agent_master.ready_pose[:3]
+                    init_rot_6d=agent_master.ready_rot_6d
+                    init_width=0.0
+                    qpos_numpy=np.concatenate([init_tcp_xyz,init_rot_6d,[init_width]])
                 else:
-                    image_list.append({'main': obs['image']})
-                qpos_numpy = np.array(obs['qpos'])
+                    cur_tcp=agent_master.get_tcp_pose()
+                    cur_xyz_and_rot_6d=xyz_rot_transform(cur_tcp, from_rep = "quaternion", to_rep = "rotation_6d")
+                    cur_width=decode_gripper_width(agent_master.get_gripper_width())
+                    qpos_numpy=np.concatenate([cur_xyz_and_rot_6d,[cur_width]])
+                    
+
                 qpos = pre_process(qpos_numpy)
                 qpos = torch.from_numpy(qpos).float().cuda().unsqueeze(0)
                 qpos_history[:, t] = qpos
-                curr_image = get_image(ts, camera_names)
+                
 
                 ### query policy
                 if config['policy_class'] == "ACT":
@@ -267,54 +313,87 @@ def eval_bc(config, ckpt_name, save_episode=True):
                     raw_action = policy(qpos, curr_image)
                 else:
                     raise NotImplementedError
-
-                ### post-process actions
-                raw_action = raw_action.squeeze(0).cpu().numpy()
-                action = post_process(raw_action)
-                target_qpos = action
-
+                if t % query_frequency == 0:
+                    ### post-process actions
+                    raw_action = raw_action.squeeze(0).cpu().numpy()
+                    action = post_process(raw_action)
+                    #target_qpos = action
+                    
+                    action_tcp=projector.project_tcp_to_base_coord(action[...,:-1], cam = agent_master.camera_serial, rotation_rep = "rotation_6d")
+                    action_width=action[...,-1]
+                    
+                    # safety insurance
+                    action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
+                    # full actions
+                    action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
+                    # add to ensemble buffer
+                    ensemble_buffer.add_action(action, t)
                 ### step the environment
-                ts = env.step(target_qpos)
-
+                #ts = env.step(target_qpos)
+                # get step action from ensemble buffer
+                step_action = ensemble_buffer.get_action()
+                if step_action is None:   # no action in the buffer => no movement.
+                    continue
+                
+                step_tcp = step_action[:-1]
+                step_width = step_action[-1]
+                # send tcp pose to robot
+                if config.discretize_rotation:
+                    rot_steps = discretize_rotation(last_rot, step_tcp[3:], np.pi / 16)
+                    last_rot = step_tcp[3:]
+                    for rot in rot_steps:
+                        step_tcp[3:] = rot
+                        agent_master.set_tcp_pose(
+                            step_tcp, 
+                            rotation_rep = "rotation_6d", 
+                            blocking = True
+                        )
+                else:
+                    agent_master.set_tcp_pose(
+                        step_tcp,
+                        rotation_rep = "rotation_6d",
+                        blocking = True
+                    )
+                
+                #send gripper width to gripper (thresholding to avoid repeating sending signals to gripper)
+                if prev_width is None or abs(prev_width - step_width) > GRIPPER_THRESHOLD:
+                    agent_master.set_gripper_width(step_width, blocking = True)
+                    prev_width = step_width
+                
                 ### for visualization
                 qpos_list.append(qpos_numpy)
-                target_qpos_list.append(target_qpos)
-                rewards.append(ts.reward)
+                #target_qpos_list.append(target_qpos)
+                #rewards.append(ts.reward)
 
             plt.close()
-        if real_robot:
-            move_grippers([env.puppet_bot_left, env.puppet_bot_right], [PUPPET_GRIPPER_JOINT_OPEN] * 2, move_time=0.5)  # open
-            pass
+        
 
         rewards = np.array(rewards)
         episode_return = np.sum(rewards[rewards!=None])
         episode_returns.append(episode_return)
-        episode_highest_reward = np.max(rewards)
-        highest_rewards.append(episode_highest_reward)
-        print(f'Rollout {rollout_id}\n{episode_return=}, {episode_highest_reward=}, {env_max_reward=}, Success: {episode_highest_reward==env_max_reward}')
-
+        
         if save_episode:
             save_videos(image_list, DT, video_path=os.path.join(ckpt_dir, f'video{rollout_id}.mp4'))
 
-    success_rate = np.mean(np.array(highest_rewards) == env_max_reward)
+    #success_rate = np.mean(np.array(highest_rewards) == env_max_reward)
     avg_return = np.mean(episode_returns)
-    summary_str = f'\nSuccess rate: {success_rate}\nAverage return: {avg_return}\n\n'
-    for r in range(env_max_reward+1):
-        more_or_equal_r = (np.array(highest_rewards) >= r).sum()
-        more_or_equal_r_rate = more_or_equal_r / num_rollouts
-        summary_str += f'Reward >= {r}: {more_or_equal_r}/{num_rollouts} = {more_or_equal_r_rate*100}%\n'
+    #summary_str = f'\nSuccess rate: {success_rate}\nAverage return: {avg_return}\n\n'
+    # for r in range(env_max_reward+1):
+    #     more_or_equal_r = (np.array(highest_rewards) >= r).sum()
+    #     more_or_equal_r_rate = more_or_equal_r / num_rollouts
+    #     summary_str += f'Reward >= {r}: {more_or_equal_r}/{num_rollouts} = {more_or_equal_r_rate*100}%\n'
 
-    print(summary_str)
+   # print(summary_str)
 
     # save success rate to txt
-    result_file_name = 'result_' + ckpt_name.split('.')[0] + '.txt'
-    with open(os.path.join(ckpt_dir, result_file_name), 'w') as f:
-        f.write(summary_str)
-        f.write(repr(episode_returns))
-        f.write('\n\n')
-        f.write(repr(highest_rewards))
+    # result_file_name = 'result_' + ckpt_name.split('.')[0] + '.txt'
+    # with open(os.path.join(ckpt_dir, result_file_name), 'w') as f:
+    #     #f.write(summary_str)
+    #     f.write(repr(episode_returns))
+    #     f.write('\n\n')
+    #     f.write(repr(highest_rewards))
 
-    return success_rate, avg_return
+    return  avg_return
 
 
 def forward_pass(data, policy):
@@ -381,7 +460,7 @@ def train_bc(train_dataloader, val_dataloader, config):
             summary_string += f'{k}: {v.item():.3f} '
         print(summary_string)
 
-        if epoch % 10 == 0:# TODO 记得改回100
+        if epoch % 100 == 0:# TODO 记得改回100
             ckpt_path = os.path.join(ckpt_dir, f'policy_epoch_{epoch}_seed_{seed}.ckpt')
             torch.save(policy.state_dict(), ckpt_path)
             plot_history(train_history, validation_history, epoch, ckpt_dir, seed)
@@ -417,6 +496,32 @@ def plot_history(train_history, validation_history, num_epochs, ckpt_dir, seed):
     print(f'Saved plots to {ckpt_dir}')
 
 
+def rot_diff(rot1, rot2):
+    rot1_mat = rotation_transform(
+        rot1,
+        from_rep = "rotation_6d",
+        to_rep = "matrix"
+    )
+    rot2_mat = rotation_transform(
+        rot2,
+        from_rep = "rotation_6d",
+        to_rep = "matrix"
+    )
+    diff = rot1_mat @ rot2_mat.T
+    diff = np.diag(diff).sum()
+    diff = min(max((diff - 1) / 2.0, -1), 1)
+    return np.arccos(diff)
+
+def discretize_rotation(rot_begin, rot_end, rot_step_size = np.pi / 16):
+    n_step = int(rot_diff(rot_begin, rot_end) // rot_step_size) + 1
+    rot_steps = []
+    for i in range(n_step):
+        rot_i = rot_begin * (n_step - 1 - i) / n_step + rot_end * (i + 1) / n_step
+        rot_steps.append(rot_i)
+    return rot_steps
+
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--eval', action='store_true')
@@ -436,6 +541,11 @@ if __name__ == '__main__':
     parser.add_argument('--dim_feedforward', action='store', type=int, help='dim_feedforward', required=False)
     parser.add_argument('--temporal_agg', action='store_true')
     
+    #迁移到真实机器新增参数。
+    # TODO 记得传入calib路径 并决定是否使用离散化旋转
+    parser.add_argument('--discretize_rotation', action = 'store_true', help = 'whether to discretize rotation process.')
     parser.add_argument('--state_dim',default=14,type=int,help="训练时，机器人的状态空间维度")
+    parser.add_argument('--calib', action = 'store', type = str, help = 'calibration path', required = True)
+    parser.add_argument('--ensemble_mode', action = 'store', type = str, help = 'temporal ensemble mode', required = False, default = 'new')
     
     main(vars(parser.parse_args()))

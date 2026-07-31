@@ -65,7 +65,7 @@ def get_args_parser():
     parser.add_argument('--temporal_agg', action='store_true')
     
     #加入把state_dim变成可传的参数
-    parser.add_argument('--state_dim',default=14,type=int,help="训练时，机器人的状态空间维度")
+    parser.add_argument('--state_dim',default=10,type=int,help="训练时，机器人的状态空间维度")
 
     return parser
 

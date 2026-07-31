@@ -1,5 +1,5 @@
 """
-Transformation utilities.从RISE迁移过来
+Transformation utilities.
 """
 
 from typing import Union
@@ -7,11 +7,9 @@ from typing import Union
 import torch
 import functools
 import numpy as np
+import pytorch3d.transforms.rotation_conversions as ptc
 
-# TODO 导入路径是RISE/dependencies
-import RISE.dependencies.pytorch3d.transforms.rotation_conversions as ptc
-
-import rotation_utils as rtu
+from utils import rotation_utils as rtu
 
 VALID_ROTATION_REPRESENTATIONS = [
     'axis_angle',

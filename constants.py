@@ -7,7 +7,8 @@ SIM_TASK_CONFIGS = {
     'push_block':{
         'dataset_dir': DATA_DIR + '/push_block',
                 'num_episodes': 50,
-                'episode_len': 400,#需要查明每一集实验的长度或怎么用os读取其不定长
+                'episode_len': 300,#需要查明每一集实验的长度或怎么用os读取其不定长
+    #相机要把全局相机的编号放在腕部相机的编号前面            
                 'camera_names': ['043322070878',
                                  '750612070851']
     },

@@ -5,7 +5,7 @@ import h5py
 from torch.utils.data import TensorDataset, DataLoader
 
 import json
-from transformation import rot_trans_mat, apply_mat_to_pose, apply_mat_to_pcd, xyz_rot_transform
+from utils.transformation import rot_trans_mat, apply_mat_to_pose, apply_mat_to_pcd, xyz_rot_transform
 from PIL import Image
 
 import IPython
@@ -20,7 +20,28 @@ class EpisodicDataset(torch.utils.data.Dataset):
         self.camera_names = camera_names #以cam_id为名
         self.norm_stats = norm_stats
         self.is_sim = True
+        self.episode_lens = []
+        self.max_episode_len = 0
+        self.episode_folds=sorted(os.listdir(os.path.join(self.dataset_dir,'train')))
         #self.__getitem__(0) # initialize self.is_sim
+        
+        # find the maximum episode len
+        for episode_id in episode_ids:
+            demo_path=os.path.join(self.dataset_dir,self.episode_folds[episode_id])
+            with open(os.path.join(demo_path, "metadata.json"), "r") as f:
+                                meta = json.load(f)
+            #tcp gripper使用第一个相机的文件夹
+            cam_path=os.path.join(demo_path,f"cam_{self.camera_names[0]}")
+            master_frame_ids = [
+                            int(os.path.splitext(x)[0]) 
+                            for x in sorted(os.listdir(os.path.join(demo_path,f"cam_{self.camera_names[0]}", "color"))) 
+                            if int(os.path.splitext(x)[0]) <= meta["finish_time"]
+                        ]
+            episode_len=len(master_frame_ids)
+            self.episode_lens.append(episode_len)
+            if episode_len > self.max_episode_len:
+                self.max_episode_len = episode_len
+        
 
     def __len__(self):
         return len(self.episode_ids)
@@ -29,7 +50,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         sample_full_episode = False # hardcode
         #目的：每次选取一个demo,抽选合法的strat_ts并得到带掩码的动作序列 位置序列
         episode_id = self.episode_ids[index]
-        demo_path=os.path.join(self.dataset_dir,sorted(os.listdir(os.path.join(self.dataset_dir,'train')))[episode_id])
+        demo_path=os.path.join(self.dataset_dir,self.episode_folds[episode_id])
         with open(os.path.join(demo_path, "metadata.json"), "r") as f:
                             meta = json.load(f)
         #tcp gripper使用第一个相机的文件夹
@@ -82,7 +103,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         slave_frame_ids_np=np.array(slave_frame_ids)
         counterpart_start_ts = np.argmin(np.abs(slave_frame_ids_np - master_id))
         slave_id=slave_frame_ids[counterpart_start_ts]
-        image_dict[self.camera_names[1]] = np.array(Image.open(os.path.join(demo_path,f"cam_{self.camera_names[1]}", "color", f"{slave_id}.png"))),image_dict[self.camera_names[0]].shape
+        image_dict[self.camera_names[1]] = np.array(Image.open(os.path.join(demo_path,f"cam_{self.camera_names[1]}", "color", f"{slave_id}.png")))
             
         
         # get all actions after and including start_ts
@@ -94,9 +115,9 @@ class EpisodicDataset(torch.utils.data.Dataset):
         is_sim = True
         self.is_sim = is_sim
         
-        padded_action = np.zeros(original_action_shape, dtype=np.float32)
+        padded_action = np.zeros((self.max_episode_len-1,original_action_shape[1]), dtype=np.float32)
         padded_action[:action_len] = action
-        is_pad = np.zeros(episode_len)
+        is_pad = np.zeros(self.max_episode_len-1)
         is_pad[action_len:] = 1
 
         # new axis for different cameras
@@ -208,7 +229,8 @@ def load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_s
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size_train, shuffle=True, pin_memory=True, num_workers=1, prefetch_factor=1)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size_val, shuffle=True, pin_memory=True, num_workers=1, prefetch_factor=1)
 
-    return train_dataloader, val_dataloader, norm_stats, train_dataset.is_sim
+    max_episode_len=train_dataset.max_episode_len
+    return train_dataloader, val_dataloader, norm_stats, train_dataset.is_sim,max_episode_len
 
 
 ### env utils
