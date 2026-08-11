@@ -5,7 +5,7 @@ Flexiv robot ethernet communication python wrapper.
 import time
 import numpy as np
 
-from device.robot import flexivrdk
+import flexivrdk
 
 
 class ModeMap:
@@ -41,7 +41,12 @@ class FlexivRobot:
 
             
     def init_robot(self):
-        self.robot = flexivrdk.Robot(self.robot_ip_address, self.pc_ip_address)
+        #self.robot = flexivrdk.Robot(self.robot_ip_address, self.pc_ip_address)
+        self.robot = flexivrdk.Robot(
+                self.robot_ip_address,              # 这里实际传 robot_sn（序列号）
+                network_interface_whitelist=[],      # 可留空或指定网卡名如 ["eth0"]
+                verbose=True
+            )
         # Clear fault on robot server if any
         if self.robot.isFault():
             print("Fault occurred on robot server, trying to clear ...")

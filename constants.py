@@ -4,42 +4,52 @@ import pathlib
 DATA_DIR = 'E:/Adapted_ACT/adapted_act'
 SIM_TASK_CONFIGS = {
     #新增我们的数据集
+    'real_data':{'dataset_dir':'/data_local/yuxuan/realdata_sampled_20260710',
+    'num_episodes': 50,
+    'episode_len': 300,
+     #相机要把全局相机的编号放在腕部相机的编号前面   
+     'camera_names': ['104122063550',
+                                      '043322070878'],
+     'calib':  '/data_local/yuxuan/realdata_sampled_20260710/calib/1783679460564'          
+        
+    },
+    
     'push_block':{
         'dataset_dir': DATA_DIR + '/push_block',
                 'num_episodes': 50,
                 'episode_len': 300,#需要查明每一集实验的长度或怎么用os读取其不定长
     #相机要把全局相机的编号放在腕部相机的编号前面            
-                'camera_names': ['043322070878',
-                                 '750612070851']
+                'camera_names': ['104122063550',
+                                 '043322070878']
     },
     
-    'sim_transfer_cube_scripted':{
-        'dataset_dir': DATA_DIR ,#+ '/sim_transfer_cube_scripted',
-        'num_episodes': 10,
-        'episode_len': 400,
-        'camera_names': ['top']
-    },
+    # 'sim_transfer_cube_scripted':{
+    #     'dataset_dir': DATA_DIR ,#+ '/sim_transfer_cube_scripted',
+    #     'num_episodes': 10,
+    #     'episode_len': 400,
+    #     'camera_names': ['top']
+    # },
 
-    'sim_transfer_cube_human':{
-        'dataset_dir': DATA_DIR + '/sim_transfer_cube_human',
-        'num_episodes': 50,
-        'episode_len': 400,
-        'camera_names': ['top']
-    },
+    # 'sim_transfer_cube_human':{
+    #     'dataset_dir': DATA_DIR + '/sim_transfer_cube_human',
+    #     'num_episodes': 50,
+    #     'episode_len': 400,
+    #     'camera_names': ['top']
+    # },
 
-    'sim_insertion_scripted': {
-        'dataset_dir': DATA_DIR + '/sim_insertion_scripted',
-        'num_episodes': 50,
-        'episode_len': 400,
-        'camera_names': ['top']
-    },
+    # 'sim_insertion_scripted': {
+    #     'dataset_dir': DATA_DIR + '/sim_insertion_scripted',
+    #     'num_episodes': 50,
+    #     'episode_len': 400,
+    #     'camera_names': ['top']
+    # },
 
-    'sim_insertion_human': {
-        'dataset_dir': DATA_DIR + '/sim_insertion_human',
-        'num_episodes': 50,
-        'episode_len': 500,
-        'camera_names': ['top']
-    },
+    # 'sim_insertion_human': {
+    #     'dataset_dir': DATA_DIR + '/sim_insertion_human',
+    #     'num_episodes': 50,
+    #     'episode_len': 500,
+    #     'camera_names': ['top']
+    # },
 }
 
 ### Simulation envs fixed constants

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import os
-import h5py
+
 from torch.utils.data import TensorDataset, DataLoader
 
 import json
@@ -27,7 +27,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         
         # find the maximum episode len
         for episode_id in episode_ids:
-            demo_path=os.path.join(self.dataset_dir,self.episode_folds[episode_id])
+            demo_path=os.path.join(self.dataset_dir,'train',self.episode_folds[episode_id])
             with open(os.path.join(demo_path, "metadata.json"), "r") as f:
                                 meta = json.load(f)
             #tcp gripper使用第一个相机的文件夹
@@ -50,7 +50,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         sample_full_episode = False # hardcode
         #目的：每次选取一个demo,抽选合法的strat_ts并得到带掩码的动作序列 位置序列
         episode_id = self.episode_ids[index]
-        demo_path=os.path.join(self.dataset_dir,self.episode_folds[episode_id])
+        demo_path=os.path.join(self.dataset_dir,'train',self.episode_folds[episode_id])
         with open(os.path.join(demo_path, "metadata.json"), "r") as f:
                             meta = json.load(f)
         #tcp gripper使用第一个相机的文件夹
@@ -137,8 +137,10 @@ class EpisodicDataset(torch.utils.data.Dataset):
 
         # normalize image and change dtype to float
         image_data = image_data / 255.0
-        action_data = (action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]
-        qpos_data = (qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]
+        # norm_stats 是 numpy(float64)，混算会把 float32 张量提升成 float64，
+        # 喂给 float32 的 nn.Linear 会报
+        action_data = ((action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]).float()
+        qpos_data = ((qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]).float()
 
         return image_data, qpos_data, action_data, is_pad
 
@@ -184,8 +186,8 @@ def get_norm_stats(dataset_dir, num_episodes,split,cam_ids):
 
 
     # normalize action data
-    action_mean = all_action_data.mean(axis=0, keepdim=True)
-    action_std = all_action_data.std(axis=0, keepdim=True)
+    action_mean = all_action_data.mean(axis=0,keepdims=True)
+    action_std = all_action_data.std(axis=0,keepdims=True)
     action_std = np.clip(action_std, 1e-2, np.inf) # clipping
 
     # normalize qpos data
@@ -197,8 +199,8 @@ def get_norm_stats(dataset_dir, num_episodes,split,cam_ids):
 
     qpos=all_action_data[0]
     
-    stats = {"action_mean": action_mean.numpy().squeeze(), "action_std": action_std.numpy().squeeze(),
-             "qpos_mean": qpos_mean.numpy().squeeze(), "qpos_std": qpos_std.numpy().squeeze(),
+    stats = {"action_mean": action_mean.squeeze(), "action_std": action_std.squeeze(),
+             "qpos_mean": qpos_mean.squeeze(), "qpos_std": qpos_std.squeeze(),
              "example_qpos": qpos}
     
     print("action_mean shape:", action_mean.shape)  # (10,)

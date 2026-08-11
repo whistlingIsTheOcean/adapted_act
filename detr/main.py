@@ -67,6 +67,10 @@ def get_args_parser():
     #加入把state_dim变成可传的参数
     parser.add_argument('--state_dim',default=10,type=int,help="训练时，机器人的状态空间维度")
 
+    #新增的仅为了重复的参数
+    parser.add_argument('--calib', action = 'store', type = str, help = 'calibration path', required = False)
+    parser.add_argument('--ensemble_mode', action = 'store', type = str, help = 'temporal ensemble mode', required = False, default = 'new')
+    parser.add_argument('--discretize_rotation', action = 'store_true', help = 'whether to discretize rotation process.')
     return parser
 
 

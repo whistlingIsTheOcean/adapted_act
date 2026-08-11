@@ -16,7 +16,7 @@ from utils_act import compute_dict_mean, set_seed, detach_dict,decode_gripper_wi
 from policy import ACTPolicy, CNNMLPPolicy
 from visualize_episodes import save_videos
 
-from sim_env import BOX_POSE
+
 
 #控制我们的机器
 from eval_agent import Agent,Agent_slave
@@ -39,14 +39,14 @@ def main(args):
     batch_size_train = args['batch_size']
     batch_size_val = args['batch_size']
     num_epochs = args['num_epochs']
-
+    
     # get task parameters
     #复用sim通路的储存位置和逻辑，储存我们的数据集的参数
     #is_sim = task_name[:4] == 'sim_'
     
     from constants import SIM_TASK_CONFIGS
     task_config = SIM_TASK_CONFIGS[task_name]
-    
+    args['calib']=task_config['calib']
     dataset_dir = task_config['dataset_dir']
     num_episodes = task_config['num_episodes']
     episode_len = task_config['episode_len']
@@ -103,6 +103,15 @@ def main(args):
     
     
     if is_eval:
+        # 读取训练时保存的 max_episode_len，保证评估步数与数据一致
+        max_len_path = os.path.join(ckpt_dir, 'max_episode_len.txt')
+        if os.path.exists(max_len_path):
+            with open(max_len_path, 'r') as f:
+                config['episode_len'] = int(f.read().strip())
+            print(f'评估 episode_len = {config["episode_len"]} (来自 {max_len_path})')
+        else:
+            print(f'[warn] 未找到 {max_len_path}，使用默认 episode_len = {config["episode_len"]}')
+
         ckpt_names = [f'policy_best.ckpt']
         results = []
         for ckpt_name in ckpt_names:
@@ -176,7 +185,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
     onscreen_render = config['onscreen_render']
     policy_config = config['policy_config']
     camera_names = config['camera_names']
-    max_timesteps = config['episode_len']-1
+    max_timesteps = config['episode_len']-1+30#多30步冗余用来容错
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
     onscreen_cam = 'angle'
@@ -319,10 +328,12 @@ def eval_bc(config, ckpt_name, save_episode=True):
                     action = post_process(raw_action)
                     #target_qpos = action
                     
-                    action_tcp=projector.project_tcp_to_base_coord(action[...,:-1], cam = agent_master.camera_serial, rotation_rep = "rotation_6d")
-                    action_width=action[...,-1]
+                    # 训练数据的 tcp 是 base 坐标系（已用数据+标定验证），
+                    # 预测 action 即为 base 坐标，无需 project_tcp_to_base_coord 投影。
+                    action_tcp = action[..., :-1]
+                    action_width = action[..., -1]
                     
-                    # safety insurance
+                    # safety insurance（base 坐标工作空间）
                     action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
                     # full actions
                     action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
@@ -460,7 +471,7 @@ def train_bc(train_dataloader, val_dataloader, config):
             summary_string += f'{k}: {v.item():.3f} '
         print(summary_string)
 
-        if epoch % 100 == 0:# TODO 记得改回100
+        if epoch % 20 == 0:# TODO 记得改回100
             ckpt_path = os.path.join(ckpt_dir, f'policy_epoch_{epoch}_seed_{seed}.ckpt')
             torch.save(policy.state_dict(), ckpt_path)
             plot_history(train_history, validation_history, epoch, ckpt_dir, seed)
@@ -543,9 +554,10 @@ if __name__ == '__main__':
     
     #迁移到真实机器新增参数。
     # TODO 记得传入calib路径 并决定是否使用离散化旋转
-    parser.add_argument('--discretize_rotation', action = 'store_true', help = 'whether to discretize rotation process.')
-    parser.add_argument('--state_dim',default=14,type=int,help="训练时，机器人的状态空间维度")
-    parser.add_argument('--calib', action = 'store', type = str, help = 'calibration path', required = True)
+    
+    parser.add_argument('--state_dim',default=10,type=int,help="训练时，机器人的状态空间维度")
+    parser.add_argument('--calib', action = 'store', type = str, help = 'calibration path', required = False)
     parser.add_argument('--ensemble_mode', action = 'store', type = str, help = 'temporal ensemble mode', required = False, default = 'new')
+    parser.add_argument('--discretize_rotation', action = 'store_true', help = 'whether to discretize rotation process.')
     
     main(vars(parser.parse_args()))
