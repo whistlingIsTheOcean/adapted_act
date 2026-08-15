@@ -1,4 +1,6 @@
 cd /home/yuxuan/adapted_act
+
+#eval
 python imitate_episodes.py \
   --eval \
   --ckpt_dir /data_local/yuxuan/ckpt_act_realdata_0710 \
@@ -14,3 +16,13 @@ python imitate_episodes.py \
   --dim_feedforward 3200 \
   --temporal_agg \
   --ensemble_mode new
+
+
+#train from zero
+
+python imitate_episodes.py \
+  --task_name real_data \
+  --ckpt_dir /data_local/yuxuan/ckpt_act_realdata_0710 \
+  --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 \
+  --batch_size 8 --dim_feedforward 3200 \
+  --num_epochs 2000 --lr 1e-5 --seed 0

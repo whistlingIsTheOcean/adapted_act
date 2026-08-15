@@ -97,7 +97,8 @@ def main(args):
         
         'calib':args['calib'],
         'ensemble_mode':args['ensemble_mode'],
-        'discretize_rotation':args['discretize_rotation']
+        'discretize_rotation':args['discretize_rotation'],
+        'visual':args['visual']
     }
 
     
@@ -264,6 +265,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
         qpos_list = []
         target_qpos_list = []
         #rewards = []
+        pred_traj = []   # --visual 时收集预测轨迹（无 visual 时空列表，不 append 不画图）
         with torch.inference_mode():
             for t in range(max_timesteps):
                 ### update onscreen render and wait for DT
@@ -331,7 +333,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
                     action = post_process(raw_action)
                     #target_qpos = action
                     
-                    # 训练数据的 tcp 是 base 坐标系（已用数据+标定验证），
+                    # 训练数据的 tcp 是 base 坐标系
                     # 预测 action 即为 base 坐标，无需 project_tcp_to_base_coord 投影。
                     action_tcp = action[..., :-1]
                     action_width = action[..., -1]
@@ -348,6 +350,8 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 step_action = ensemble_buffer.get_action()
                 if step_action is None:   # no action in the buffer => no movement.
                     continue
+                if config.get('visual', False):
+                    pred_traj.append(step_action.copy())
                 
                 step_tcp = step_action[:-1]
                 step_width = step_action[-1]
@@ -388,6 +392,27 @@ def eval_bc(config, ckpt_name, save_episode=True):
         
         if save_episode:
             save_videos(image_list, DT, video_path=os.path.join(ckpt_dir, f'video{rollout_id}.mp4'))
+
+        # --visual：评估结束后把收集的预测轨迹画成 3D 图（不发控制，仅可视化）
+        if config.get('visual', False) and pred_traj:
+            pred_traj_arr = np.array(pred_traj)   # (T,10): xyz + rot6d + width
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            fig = plt.figure(figsize=(12, 9))
+            ax = fig.add_subplot(111, projection='3d')
+            ax.plot(pred_traj_arr[:, 0], pred_traj_arr[:, 1], pred_traj_arr[:, 2],
+                    'r-', lw=2.5, label='pred (no control)')
+            sc = ax.scatter(pred_traj_arr[:, 0], pred_traj_arr[:, 1], pred_traj_arr[:, 2],
+                            c=pred_traj_arr[:, -1], cmap='coolwarm', vmin=0, vmax=0.095)
+            fig.colorbar(sc, ax=ax, label='gripper width (m)')
+            ax.set_xlabel('x (m)'); ax.set_ylabel('y (m)'); ax.set_zlabel('z (m)')
+            ax.legend()
+            ax.set_title(f'Predicted traj (visual) - {ckpt_name}')
+            out_png = os.path.join(ckpt_dir, f'pred_traj_visual{rollout_id}.png')
+            fig.savefig(out_png, dpi=110, bbox_inches='tight')
+            plt.close(fig)
+            print(f'[visual] 预测轨迹已保存: {out_png}')
 
     #success_rate = np.mean(np.array(highest_rewards) == env_max_reward)
     avg_return = np.mean(episode_returns)
@@ -554,6 +579,7 @@ if __name__ == '__main__':
     parser.add_argument('--hidden_dim', action='store', type=int, help='hidden_dim', required=False)
     parser.add_argument('--dim_feedforward', action='store', type=int, help='dim_feedforward', required=False)
     parser.add_argument('--temporal_agg', action='store_true')
+    parser.add_argument('--visual', action='store_true', help='真机评估时可视化预测轨迹（只采集预测并画图，不发控制指令）')
     
     #迁移到真实机器新增参数。
     # TODO 记得传入calib路径 并决定是否使用离散化旋转
