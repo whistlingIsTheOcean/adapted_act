@@ -96,7 +96,7 @@ def main(args):
         'real_robot': True,
         
         'calib':args['calib'],
-        'ensemble_mode':args['ensemble_mode'],
+        #'ensemble_mode':args['ensemble_mode'],
         'discretize_rotation':args['discretize_rotation'],
         'visual':args['visual']
     }
@@ -223,7 +223,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
     if config['discretize_rotation']:
         last_rot = np.array(agent_master.ready_rot_6d, dtype = np.float32)
     #projector = Projector(config['calib'])
-    ensemble_buffer = EnsembleBuffer(mode = config['ensemble_mode'])
+    #ensemble_buffer = EnsembleBuffer(mode = config['ensemble_mode'])
     
 
     query_frequency = policy_config['num_queries']
@@ -312,29 +312,29 @@ def eval_bc(config, ckpt_name, save_episode=True):
                     raw_action = policy(qpos, curr_image)
                 else:
                     raise NotImplementedError
-                if t % query_frequency == 0:
+                #if t % query_frequency == 0:
                     ### post-process actions
-                    raw_action = raw_action.squeeze(0).cpu().numpy()
-                    action = post_process(raw_action)
-                    #target_qpos = action
-                    
-                    # 训练数据的 tcp 是 base 坐标系
-                    # 预测 action 即为 base 坐标，无需 project_tcp_to_base_coord 投影。
-                    action_tcp = action[..., :-1]
-                    action_width = action[..., -1]
-                    
-                    # safety insurance（base 坐标工作空间）
-                    action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
-                    # full actions
-                    action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
-                    # add to ensemble buffer
-                    ensemble_buffer.add_action(action, t)
+                raw_action = raw_action.squeeze(0).cpu().numpy()
+                action = post_process(raw_action)
+                #target_qpos = action
+                
+                # 训练数据的 tcp 是 base 坐标系
+                # 预测 action 即为 base 坐标，无需 project_tcp_to_base_coord 投影。
+                action_tcp = action[..., :-1]
+                action_width = action[..., -1]
+                
+                # safety insurance（base 坐标工作空间）
+                action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
+                # full actions
+                step_action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
+                # add to ensemble buffer
+                #ensemble_buffer.add_action(action, t)
 
-                    print(f't={t},shape of action: {action.shape}')
+                print(f't={t},shape of action: {action.shape}')
                 ### step the environment
                 #ts = env.step(target_qpos)
                 # get step action from ensemble buffer
-                step_action = ensemble_buffer.get_action()
+                #step_action = ensemble_buffer.get_action()
                 if step_action is None:   # no action in the buffer => no movement.
                     print(f'[warn] t={t}: ensemble buffer is empty, skipping step.')
                     continue
@@ -344,28 +344,30 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
                 step_tcp = step_action[:-1] 
                 step_width = step_action[-1] 
-                # # send tcp pose to robot
-                # if config['discretize_rotation']:
-                #     rot_steps = discretize_rotation(last_rot, step_tcp[3:], np.pi / 16)
-                #     last_rot = step_tcp[3:]
-                #     for rot in rot_steps:
-                #         step_tcp[3:] = rot
-                #         agent_master.set_tcp_pose(
-                #             step_tcp, 
-                #             rotation_rep = "rotation_6d", 
-                #             blocking = True
-                #         )
-                # else:
-                #     agent_master.set_tcp_pose(
-                #         step_tcp,
-                #         rotation_rep = "rotation_6d",
-                #         blocking = True
-                #     )
+                # send tcp pose to robot
+                if config['discretize_rotation']:
+                    rot_steps = discretize_rotation(last_rot, step_tcp[3:], np.pi / 16)
+                    last_rot = step_tcp[3:]
+                    for rot in rot_steps:
+                        step_tcp[3:] = rot
+                        agent_master.set_tcp_pose(
+                            step_tcp, 
+                            rotation_rep = "rotation_6d", 
+                            blocking = True
+                        )
+                else:
+                    agent_master.set_tcp_pose(
+                        step_tcp,
+                        rotation_rep = "rotation_6d",
+                        blocking = True
+                    )
                 
-                # #send gripper width to gripper (thresholding to avoid repeating sending signals to gripper)
-                # if prev_width is None or abs(prev_width - step_width) > GRIPPER_THRESHOLD:
-                #     agent_master.set_gripper_width(step_width, blocking = True)
-                #     prev_width = step_width
+                #send gripper width to gripper (thresholding to avoid repeating sending signals to gripper)
+                if step_width <= 0.02:
+                    step_width = 0.0
+                if prev_width is None or abs(prev_width - step_width) > GRIPPER_THRESHOLD:
+                    agent_master.set_gripper_width(step_width, blocking = True)
+                    prev_width = step_width
                 
                 ### for visualization
                 qpos_list.append(qpos_numpy)
@@ -560,7 +562,7 @@ if __name__ == '__main__':
     
     parser.add_argument('--state_dim',default=10,type=int,help="训练时，机器人的状态空间维度")
     parser.add_argument('--calib', action = 'store', type = str, help = 'calibration path', required = False)
-    parser.add_argument('--ensemble_mode', action = 'store', type = str, help = 'temporal ensemble mode', required = False, default = 'new')
+    # parser.add_argument('--ensemble_mode', action = 'store', type = str, help = 'temporal ensemble mode', required = False, default = 'new')
     parser.add_argument('--discretize_rotation', action = 'store_true', help = 'whether to discretize rotation process.')
     
     main(vars(parser.parse_args()))

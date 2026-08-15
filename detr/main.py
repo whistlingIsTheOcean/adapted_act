@@ -69,7 +69,7 @@ def get_args_parser():
 
     #新增的仅为了重复的参数
     parser.add_argument('--calib', action = 'store', type = str, help = 'calibration path', required = False)
-    parser.add_argument('--ensemble_mode', action = 'store', type = str, help = 'temporal ensemble mode', required = False, default = 'new')
+    # parser.add_argument('--ensemble_mode', action = 'store', type = str, help = 'temporal ensemble mode', required = False, default = 'new')
     parser.add_argument('--discretize_rotation', action = 'store_true', help = 'whether to discretize rotation process.')
     parser.add_argument('--visual', action='store_true', help='真机评估时可视化预测轨迹（只采集预测并画图，不发控制指令）')
     return parser
