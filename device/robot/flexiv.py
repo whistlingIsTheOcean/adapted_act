@@ -44,7 +44,7 @@ class FlexivRobot:
         #self.robot = flexivrdk.Robot(self.robot_ip_address, self.pc_ip_address)
         self.robot = flexivrdk.Robot(
                 self.robot_ip_address,              # 这里实际传 robot_sn（序列号）
-                network_interface_whitelist=[],      # 可留空或指定网卡名如 ["eth0"]
+                network_interface_whitelist=[],      
                 verbose=True
             )
         # Clear fault on robot server if any

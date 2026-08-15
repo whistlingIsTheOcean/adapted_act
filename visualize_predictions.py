@@ -16,7 +16,9 @@ ACT 评估前可视化（不依赖真机 / 不修改任何训练代码）。
   - --num_samples = 采样多少个【不同】demo；--start_ts = 指定起点（-1 表示每个 demo 随机取一个时刻）
   - 默认自动选择 ckpt 目录里【最新】的 .ckpt（按修改时间）；也可 --ckpt 指定
   - 无 DISPLAY 且没给 --save_dir 时，自动改用无头渲染并保存到 ./vis_out
-  - 红 = 预测轨迹；绿 = 真实轨迹；点颜色 = 夹爪宽度（蓝=闭合→红=张开）；交互模式含姿态坐标架
+  - 图例：
+      无头(matplotlib): 绿=真实轨迹、红=预测轨迹，散点颜色=夹爪宽度(蓝闭→红开)
+      交互(open3d):     绿=真实轨迹、红=预测轨迹，球大小=夹爪宽度(闭合小/张开大)，含姿态坐标架
   - 数据 tcp 是【全局相机坐标系】，预测/真实同框对比即可
   - 若 load_state_dict 报维度不匹配，说明 --chunk_size/--hidden_dim/--dim_feedforward 与训练不一致，请对齐。
 """
@@ -131,15 +133,26 @@ def width_to_color(w):
     return np.array([1 - t, 0.0, t])
 
 
-def make_traj_geoms(traj, color, every=5, radius=0.006, axes_len=0.02, label=''):
-    """traj: (N,10) xyz+rot6d+width。返回 [球, 线, 坐标架] 的几何体列表。"""
+def make_traj_geoms(traj, color, every=5, base_radius=0.006, axes_len=0.02,
+                    label='', width_scale=True):
+    """
+    返回 [球, 线, 坐标架] 的几何体列表。
+
+    - 球统一用轨迹色 color（真实=绿 / 预测=红），避免两条轨迹球色混淆；
+    - 夹爪宽度用球半径表示（width_scale=True：闭合小球、张开大球）。
+    """
     pts = traj[:, :3]
     widths = traj[:, -1]
     spheres = []
     for p, w in zip(pts, widths):
-        s = o3d.geometry.TriangleMesh.create_sphere(radius)
+        if width_scale:
+            t = float(np.clip((w - WIDTH_MIN) / (WIDTH_MAX - WIDTH_MIN), 0, 1))
+            r = base_radius * (0.5 + 1.5 * t)
+        else:
+            r = base_radius
+        s = o3d.geometry.TriangleMesh.create_sphere(r)
         s.translate(p)
-        s.paint_uniform_color(width_to_color(w))
+        s.paint_uniform_color(color)
         spheres.append(s)
     # 连线
     line = o3d.geometry.LineSet()

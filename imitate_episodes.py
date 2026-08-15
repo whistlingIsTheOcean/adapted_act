@@ -103,14 +103,17 @@ def main(args):
     
     
     if is_eval:
-        # 读取训练时保存的 max_episode_len，保证评估步数与数据一致
-        max_len_path = os.path.join(ckpt_dir, 'max_episode_len.txt')
-        if os.path.exists(max_len_path):
-            with open(max_len_path, 'r') as f:
-                config['episode_len'] = int(f.read().strip())
-            print(f'评估 episode_len = {config["episode_len"]} (来自 {max_len_path})')
-        else:
-            print(f'[warn] 未找到 {max_len_path}，使用默认 episode_len = {config["episode_len"]}')
+        # 读取训练时保存的 max_episode_len
+        #max_len_path = os.path.join(ckpt_dir, 'max_episode_len.txt')
+        max_episode_len =188 #代码需要改变存放位置，所以硬编码罢
+        config['episode_len'] = max_episode_len
+
+        # if os.path.exists(max_len_path):
+        #     with open(max_len_path, 'r') as f:
+        #         config['episode_len'] = int(f.read().strip())
+        #     print(f'评估 episode_len = {config["episode_len"]} (来自 {max_len_path})')
+        # else:
+        #     print(f'[warn] 未找到 {max_len_path}，使用默认 episode_len = {config["episode_len"]}')
 
         ckpt_names = [f'policy_best.ckpt']
         results = []
@@ -185,7 +188,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
     onscreen_render = config['onscreen_render']
     policy_config = config['policy_config']
     camera_names = config['camera_names']
-    max_timesteps = config['episode_len']-1+30#多30步冗余用来容错
+    max_timesteps = config['episode_len']-1+20#多20步冗余用来容错
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
     onscreen_cam = 'angle'

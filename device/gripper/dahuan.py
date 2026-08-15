@@ -80,7 +80,7 @@ class DahuanModbusGripper:
         )[1]
         assert return_data == width_permillage
         self.width = width_permillage
-        self.cur_width = width_permillage   # 同步反馈值，供 get_gripper_width() 使用
+        #self.cur_width = width_permillage   # 同步反馈值，供 get_gripper_width() 使用
 
     def open_gripper(self):
         '''

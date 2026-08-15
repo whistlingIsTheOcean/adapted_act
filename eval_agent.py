@@ -92,7 +92,7 @@ class Agent:
         return self.robot.get_tcp_pose()
     
     def get_gripper_width(self):
-        return self.gripper.cur_width
+        return self.gripper.width
     
     
 class Agent_slave:
