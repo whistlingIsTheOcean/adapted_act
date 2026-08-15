@@ -219,21 +219,12 @@ def eval_bc(config, ckpt_name, save_episode=True):
     agent_slave = Agent_slave(
         camera_serial = camera_names[1]
     )
-    
-    if config.discretize_rotation:
+
+    if config['discretize_rotation']:
         last_rot = np.array(agent_master.ready_rot_6d, dtype = np.float32)
-    projector = Projector(config['calib'])
+    #projector = Projector(config['calib'])
     ensemble_buffer = EnsembleBuffer(mode = config['ensemble_mode'])
     
-    # if real_robot:
-    #     from aloha_scripts.robot_utils import move_grippers # requires aloha
-    #     from aloha_scripts.real_env import make_real_env # requires aloha
-    #     env = make_real_env(init_node=True)
-    #     env_max_reward = 0
-    # else:
-    #     from sim_env import make_sim_env
-    #     env = make_sim_env(task_name)
-    #     env_max_reward = env.task.max_reward
 
     query_frequency = policy_config['num_queries']
     if temporal_agg:
@@ -268,13 +259,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
         pred_traj = []   # --visual 时收集预测轨迹（无 visual 时空列表，不 append 不画图）
         with torch.inference_mode():
             for t in range(max_timesteps):
-                ### update onscreen render and wait for DT
-                # if onscreen_render:
-                #     image = env._physics.render(height=480, width=640, camera_id=onscreen_cam)
-                #     plt_img.set_data(image)
-                #     plt.pause(DT)
-
-                ### process previous timestep to get qpos and image_list
+                
                 
                 obs_dict['images']={}
                 master_image,_=agent_master.get_observation()
@@ -344,39 +329,43 @@ def eval_bc(config, ckpt_name, save_episode=True):
                     action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
                     # add to ensemble buffer
                     ensemble_buffer.add_action(action, t)
+
+                    print(f't={t},shape of action: {action.shape}')
                 ### step the environment
                 #ts = env.step(target_qpos)
                 # get step action from ensemble buffer
                 step_action = ensemble_buffer.get_action()
                 if step_action is None:   # no action in the buffer => no movement.
+                    print(f'[warn] t={t}: ensemble buffer is empty, skipping step.')
                     continue
+                print(f'step_action: {step_action}')
                 if config.get('visual', False):
                     pred_traj.append(step_action.copy())
+
+                step_tcp = step_action[:-1] 
+                step_width = step_action[-1] 
+                # # send tcp pose to robot
+                # if config['discretize_rotation']:
+                #     rot_steps = discretize_rotation(last_rot, step_tcp[3:], np.pi / 16)
+                #     last_rot = step_tcp[3:]
+                #     for rot in rot_steps:
+                #         step_tcp[3:] = rot
+                #         agent_master.set_tcp_pose(
+                #             step_tcp, 
+                #             rotation_rep = "rotation_6d", 
+                #             blocking = True
+                #         )
+                # else:
+                #     agent_master.set_tcp_pose(
+                #         step_tcp,
+                #         rotation_rep = "rotation_6d",
+                #         blocking = True
+                #     )
                 
-                step_tcp = step_action[:-1]
-                step_width = step_action[-1]
-                # send tcp pose to robot
-                if config.discretize_rotation:
-                    rot_steps = discretize_rotation(last_rot, step_tcp[3:], np.pi / 16)
-                    last_rot = step_tcp[3:]
-                    for rot in rot_steps:
-                        step_tcp[3:] = rot
-                        agent_master.set_tcp_pose(
-                            step_tcp, 
-                            rotation_rep = "rotation_6d", 
-                            blocking = True
-                        )
-                else:
-                    agent_master.set_tcp_pose(
-                        step_tcp,
-                        rotation_rep = "rotation_6d",
-                        blocking = True
-                    )
-                
-                #send gripper width to gripper (thresholding to avoid repeating sending signals to gripper)
-                if prev_width is None or abs(prev_width - step_width) > GRIPPER_THRESHOLD:
-                    agent_master.set_gripper_width(step_width, blocking = True)
-                    prev_width = step_width
+                # #send gripper width to gripper (thresholding to avoid repeating sending signals to gripper)
+                # if prev_width is None or abs(prev_width - step_width) > GRIPPER_THRESHOLD:
+                #     agent_master.set_gripper_width(step_width, blocking = True)
+                #     prev_width = step_width
                 
                 ### for visualization
                 qpos_list.append(qpos_numpy)
@@ -416,22 +405,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
     #success_rate = np.mean(np.array(highest_rewards) == env_max_reward)
     avg_return = np.mean(episode_returns)
-    #summary_str = f'\nSuccess rate: {success_rate}\nAverage return: {avg_return}\n\n'
-    # for r in range(env_max_reward+1):
-    #     more_or_equal_r = (np.array(highest_rewards) >= r).sum()
-    #     more_or_equal_r_rate = more_or_equal_r / num_rollouts
-    #     summary_str += f'Reward >= {r}: {more_or_equal_r}/{num_rollouts} = {more_or_equal_r_rate*100}%\n'
-
-   # print(summary_str)
-
-    # save success rate to txt
-    # result_file_name = 'result_' + ckpt_name.split('.')[0] + '.txt'
-    # with open(os.path.join(ckpt_dir, result_file_name), 'w') as f:
-    #     #f.write(summary_str)
-    #     f.write(repr(episode_returns))
-    #     f.write('\n\n')
-    #     f.write(repr(highest_rewards))
-
+    
     return  avg_return
 
 
@@ -499,7 +473,7 @@ def train_bc(train_dataloader, val_dataloader, config):
             summary_string += f'{k}: {v.item():.3f} '
         print(summary_string)
 
-        if epoch % 20 == 0:# TODO 记得改回100
+        if epoch % 100 == 0:# TODO 记得改回100
             ckpt_path = os.path.join(ckpt_dir, f'policy_epoch_{epoch}_seed_{seed}.ckpt')
             torch.save(policy.state_dict(), ckpt_path)
             plot_history(train_history, validation_history, epoch, ckpt_dir, seed)

@@ -1,9 +1,10 @@
 cd /home/yuxuan/adapted_act
+export PYTHONPATH="/home/ubuntu/yuxuan/adapted_act/detr:$PYTHONPATH"
 
 #eval
 python imitate_episodes.py \
   --eval \
-  --ckpt_dir /data_local/yuxuan/ckpt_act_realdata_0710 \
+  --ckpt_dir /home/ubuntu/yuxuan/adapted_act/ckpt \
   --policy_class ACT \
   --task_name real_data \
   --batch_size 8 \
@@ -15,14 +16,14 @@ python imitate_episodes.py \
   --hidden_dim 512 \
   --dim_feedforward 3200 \
   --temporal_agg \
-  --ensemble_mode new
+  --ensemble_mode new --visual --discretize_rotation
 
 
 #train from zero
 
 python imitate_episodes.py \
   --task_name real_data \
-  --ckpt_dir /data_local/yuxuan/ckpt_act_realdata_0710 \
+  --ckpt_dir /home/ubuntu/yuxuan/adapted_act/ckpt \
   --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 \
   --batch_size 8 --dim_feedforward 3200 \
-  --num_epochs 2000 --lr 1e-5 --seed 0
+  --num_epochs 2000 --lr 1e-5 --seed 0 
