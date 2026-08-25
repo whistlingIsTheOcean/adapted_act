@@ -74,7 +74,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         if sample_full_episode:
             start_ts = 0
         else:
-            start_ts = np.random.choice(episode_len)
+            start_ts = np.random.choice(episode_len-1)
         all_tcp_data=[]
         all_gripper_data=[]
         tcp_path=os.path.join(cam_path,'tcp')
@@ -107,8 +107,8 @@ class EpisodicDataset(torch.utils.data.Dataset):
             
         
         # get all actions after and including start_ts
-        action = all_action_data[min(start_ts + 1, len(all_action_data)-1):] # hack removed
-        action_len =  episode_len - (start_ts + 1) # hack, to make timesteps more aligned
+        action = all_action_data[start_ts + 1:] # hack removed
+        action_len =  len(action) # hack, to make timesteps more aligned
         original_action_shape = all_action_data.shape
         
         # create mask padding
