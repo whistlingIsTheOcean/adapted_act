@@ -8,7 +8,7 @@ from device.robot.flexiv import FlexivRobot
 from utils.transformation import xyz_rot_transform
 from device.gripper.dahuan import DahuanModbusGripper
 from device.camera.realsense import RealSenseRGBDCamera
-
+from easyrobot.arm.flexiv import FlexivArm
 
 class Agent:
     """
@@ -27,7 +27,8 @@ class Agent:
         self.camera_serial = camera_serial
 
         print("Init robot, gripper, and camera.")
-        self.robot = FlexivRobot(robot_ip_address = robot_ip, pc_ip_address = pc_ip)
+        #self.robot = FlexivRobot(robot_ip_address = robot_ip, pc_ip_address = pc_ip)
+        self.robot = FlexivArm("Rizon4-062027")
         self.robot.send_tcp_pose(self.ready_pose)
         time.sleep(1.5)
         
@@ -52,7 +53,8 @@ class Agent:
     
     @property
     def ready_pose(self):
-        return np.array([0.5, 0.0, 0.17, 0.0, 0.0, 1.0, 0.0])
+        #return np.array([0.5, 0.0, 0.17, 0.0, 0.0, 1.0, 0.0])
+        return np.array([0.4, 0.0, 0.25, 0.0, 0.0, 1.0, 0.0])
 
     @property
     def ready_rot_6d(self):
