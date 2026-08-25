@@ -107,8 +107,8 @@ class EpisodicDataset(torch.utils.data.Dataset):
             
         
         # get all actions after and including start_ts
-        action = all_action_data[max(0, start_ts - 1):] # hack, to make timesteps more aligned
-        action_len = episode_len - max(0, start_ts - 1) # hack, to make timesteps more aligned
+        action = all_action_data[min(start_ts + 1, len(all_action_data)-1):] # hack removed
+        action_len =  episode_len - (start_ts + 1) # hack, to make timesteps more aligned
         original_action_shape = all_action_data.shape
         
         # create mask padding
@@ -138,7 +138,7 @@ class EpisodicDataset(torch.utils.data.Dataset):
         # normalize image and change dtype to float
         image_data = image_data / 255.0
         # norm_stats 是 numpy(float64)，混算会把 float32 张量提升成 float64，
-        # 喂给 float32 的 nn.Linear 会报
+        # 喂给 float32 的 nn.Linear 会错
         action_data = ((action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]).float()
         qpos_data = ((qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]).float()
 

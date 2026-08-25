@@ -223,7 +223,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
     if config.discretize_rotation:
         last_rot = np.array(agent_master.ready_rot_6d, dtype = np.float32)
     projector = Projector(config['calib'])
-    ensemble_buffer = EnsembleBuffer(mode = config['ensemble_mode'])
+    # 不再使用 ensemble_buffer：每步 post_process 后直接执行（等价原版 ACT）
     
     # if real_robot:
     #     from aloha_scripts.robot_utils import move_grippers # requires aloha
@@ -235,7 +235,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
     #     env = make_sim_env(task_name)
     #     env_max_reward = env.task.max_reward
 
-    query_frequency = policy_config['num_queries']
+    query_frequency = int(policy_config['num_queries']/5)
     if temporal_agg:
         query_frequency = 1
         num_queries = policy_config['num_queries']
@@ -327,29 +327,15 @@ def eval_bc(config, ckpt_name, save_episode=True):
                     raw_action = policy(qpos, curr_image)
                 else:
                     raise NotImplementedError
-                if t % query_frequency == 0:
-                    ### post-process actions
-                    raw_action = raw_action.squeeze(0).cpu().numpy()
-                    action = post_process(raw_action)
-                    #target_qpos = action
-                    
-                    # 训练数据的 tcp 是 base 坐标系
-                    # 预测 action 即为 base 坐标，无需 project_tcp_to_base_coord 投影。
-                    action_tcp = action[..., :-1]
-                    action_width = action[..., -1]
-                    
-                    # safety insurance（base 坐标工作空间）
-                    action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
-                    # full actions
-                    action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
-                    # add to ensemble buffer
-                    ensemble_buffer.add_action(action, t)
-                ### step the environment
-                #ts = env.step(target_qpos)
-                # get step action from ensemble buffer
-                step_action = ensemble_buffer.get_action()
-                if step_action is None:   # no action in the buffer => no movement.
-                    continue
+                ### post-process actions（每步执行，等价原版 ACT；不再经过 ensemble_buffer）
+                raw_action = raw_action.squeeze(0).cpu().numpy()
+                action = post_process(raw_action)
+                # 训练数据的 tcp 是 base 坐标系，预测 action 即为 base 坐标，无需投影
+                action_tcp = action[..., :-1]
+                action_width = action[..., -1]
+                # safety insurance（base 坐标工作空间）
+                action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
+                step_action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)   # (dim,)
                 if config.get('visual', False):
                     pred_traj.append(step_action.copy())
                 
@@ -499,7 +485,7 @@ def train_bc(train_dataloader, val_dataloader, config):
             summary_string += f'{k}: {v.item():.3f} '
         print(summary_string)
 
-        if epoch % 20 == 0:# TODO 记得改回100
+        if epoch % 50 == 0:# TODO 记得改回100
             ckpt_path = os.path.join(ckpt_dir, f'policy_epoch_{epoch}_seed_{seed}.ckpt')
             torch.save(policy.state_dict(), ckpt_path)
             plot_history(train_history, validation_history, epoch, ckpt_dir, seed)
