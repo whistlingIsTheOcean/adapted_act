@@ -4,13 +4,13 @@ import pathlib
 DATA_DIR = 'E:/Adapted_ACT/adapted_act'
 SIM_TASK_CONFIGS = {
     #新增我们的数据集
-    'real_data':{'dataset_dir':'/data_local/yuxuan/realdata_sampled_20260710',
+    'real_data':{'dataset_dir':'/data/hongjie/data/mask/plate',
     'num_episodes': 50,
     'episode_len': 300,
      #相机要把全局相机的编号放在腕部相机的编号前面   
      'camera_names': ['104122063550',
                                       '043322070878'],
-     'calib':  '/data_local/yuxuan/realdata_sampled_20260710/calib/1783679460564'          
+     'calib':  '/data/hongjie/data/mask/plate/calib/1787499397962'          
         
     },
     

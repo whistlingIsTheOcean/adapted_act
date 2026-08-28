@@ -17,7 +17,7 @@ from policy import ACTPolicy, CNNMLPPolicy
 from visualize_episodes import save_videos
 
 
-
+from PIL import Image
 #控制我们的机器
 # from eval_agent import Agent,Agent_slave
 from utils.constants import *
@@ -106,48 +106,22 @@ def main(args):
     if is_eval:
         # 读取训练时保存的 max_episode_len
         #max_len_path = os.path.join(ckpt_dir, 'max_episode_len.txt')
-        max_episode_len =188 #代码需要改变存放位置，所以硬编码罢
+        max_episode_len =158 #代码需要改变存放位置，所以硬编码罢
         config['episode_len'] = max_episode_len
-
-        # if os.path.exists(max_len_path):
-        #     with open(max_len_path, 'r') as f:
-        #         config['episode_len'] = int(f.read().strip())
-        #     print(f'评估 episode_len = {config["episode_len"]} (来自 {max_len_path})')
-        # else:
-        #     print(f'[warn] 未找到 {max_len_path}，使用默认 episode_len = {config["episode_len"]}')
 
         ckpt_names = [f'policy_best.ckpt']
         results = []
         for ckpt_name in ckpt_names:
             avg_return = eval_bc(config, ckpt_name, save_episode=True)
-            results.append([ckpt_name,  avg_return])
+            #results.append([ckpt_name,  avg_return])
 
-        for ckpt_name,  avg_return in results:
-            print(f'{ckpt_name}:  {avg_return=}')
+        # for ckpt_name,  avg_return in results:
+        #     print(f'{ckpt_name}:  {avg_return=}')
         print()
         exit()
-
-    train_dataloader, val_dataloader, stats, _ ,max_episode_len= load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val)
-    config['episode_len']=max_episode_len
-    #保存加载数据集时统计出的max_episode_len,
-    # TODO 在评估前把这个参数传进args
-    with open(os.path.join(ckpt_dir,"max_episode_len.txt"),'w')  as f:
-        f.write(str(max_episode_len))
-
-    # save dataset stats
-    if not os.path.isdir(ckpt_dir):
-        os.makedirs(ckpt_dir)
-    stats_path = os.path.join(ckpt_dir, f'dataset_stats.pkl')
-    with open(stats_path, 'wb') as f:
-        pickle.dump(stats, f)
-
-    best_ckpt_info = train_bc(train_dataloader, val_dataloader, config)
-    best_epoch, min_val_loss, best_state_dict = best_ckpt_info
-
-    # save best checkpoint
-    ckpt_path = os.path.join(ckpt_dir, f'policy_best.ckpt')
-    torch.save(best_state_dict, ckpt_path)
-    print(f'Best ckpt, val loss {min_val_loss:.6f} @ epoch{best_epoch}')
+    else:
+        print("This script is only for single frame evaluation")
+        exit()
 
 
 def make_policy(policy_class, policy_config):
@@ -208,25 +182,6 @@ def eval_bc(config, ckpt_name, save_episode=True):
 
     post_process = lambda a: a * stats['action_std'] + stats['action_mean']
 
-    #load environment
-    agent_master = Agent(
-        robot_ip = "192.168.2.100",
-        pc_ip = "192.168.2.35",
-        gripper_port = "/dev/ttyUSB0",
-        camera_serial = camera_names[0]
-    )
-    agent_slave = Agent_slave(
-        camera_serial = camera_names[1]
-    )
-
-    if config['discretize_rotation']:
-        last_rot = np.array(agent_master.ready_rot_6d, dtype = np.float32)
-
-    
-    # 不再使用 ensemble_buffer：每步 post_process 后直接执行（等价原版 ACT）
-
-    #projector = Projector(config['calib'])
-    #ensemble_buffer = EnsembleBuffer(mode = config['ensemble_mode'])
 
     
 
@@ -255,153 +210,98 @@ def eval_bc(config, ckpt_name, save_episode=True):
         
         rewards = []
         obs_dict={}
-        qpos_history = torch.zeros((1, max_timesteps, state_dim)).cuda()
+        #qpos_history = torch.zeros((1, max_timesteps, state_dim)).cuda()
         image_list = [] # for visualization
         qpos_list = []
         target_qpos_list = []
         #rewards = []
         pred_traj = []   # --visual 时收集预测轨迹（无 visual 时空列表，不 append 不画图）
         with torch.inference_mode():
-            for t in range(max_timesteps):
-                
-                
-                obs_dict['images']={}
-                master_image,_=agent_master.get_observation()
-                slave_image,_=agent_slave.get_observation()
-                obs_dict['images'][camera_names[0]]=master_image
-                obs_dict['images'][camera_names[1]]=slave_image
-                image_list.append(obs_dict['images'])
-                
-                curr_image = get_image(obs_dict['images'], camera_names)
+            for i in range(1,11):
+                scene_path=os.path.join(f"/home/yuxuan/task_0003_cue_mismatch_rise/task_0003_user_0001_scene_000{i}_cfg_0001")
+                if i==10:
+                    scene_path=os.path.join(f"/home/yuxuan/task_0003_cue_mismatch_rise/task_0003_user_0001_scene_0010_cfg_0001")
+                fold_list=["approach_pregrasp","grasp_place","grasp_transport"]
+                    #for t in range(max_timesteps):
+                for fold_name in fold_list:    
+                    master_image_path=os.path.join(scene_path,fold_name,"observation_color.png")
+                    slave_image_path=os.path.join(scene_path,fold_name,"inhand_observation_color.png")
+                    obs_dict['images']={}
+                    master_image=np.array(Image.open(master_image_path))
+                    slave_image=np.array(Image.open(slave_image_path))
+                    obs_dict['images'][camera_names[0]]=master_image
+                    obs_dict['images'][camera_names[1]]=slave_image
+                    image_list.append(obs_dict['images'])
+                    
+                    curr_image = get_image(obs_dict['images'], camera_names)
 
-                ### query policy
-                if config['policy_class'] == "ACT":
-                    if t % query_frequency == 0:
-                        all_actions = policy(curr_image)
-                    if temporal_agg:
-                        all_time_actions[[t], t:t+num_queries] = all_actions
-                        actions_for_curr_step = all_time_actions[:, t]
-                        actions_populated = torch.all(actions_for_curr_step != 0, axis=1)
-                        actions_for_curr_step = actions_for_curr_step[actions_populated]
-                        k = 0.01
-                        exp_weights = np.exp(-k * np.arange(len(actions_for_curr_step)))
-                        exp_weights = exp_weights / exp_weights.sum()
-                        exp_weights = torch.from_numpy(exp_weights).cuda().unsqueeze(dim=1)
-                        raw_action = (actions_for_curr_step * exp_weights).sum(dim=0, keepdim=True)
+
+                    ### query policy
+                    if config['policy_class'] == "ACT":
+                       
+                        all_actions = policy(curr_image)  # shape: (num_queries=chunk_size, batch=1, state_dim)
+                        assert isinstance(all_actions, torch.Tensor), "返回 action tensor"
+                        
+                    elif config['policy_class'] == "CNNMLP":
+                        raise NotImplementedError
+                       
                     else:
-                        raw_action = all_actions[:, t % query_frequency]
-                elif config['policy_class'] == "CNNMLP":
-                    raise NotImplementedError
-                else:
-                    raise NotImplementedError
+                        raise NotImplementedError
 
-                ### post-process actions（每步执行，等价原版 ACT；不再经过 ensemble_buffer）
-                raw_action = raw_action.squeeze(0).cpu().numpy()
-                action = post_process(raw_action)
-                # 训练数据的 tcp 是 base 坐标系，预测 action 即为 base 坐标，无需投影
-                action_tcp = action[..., :-1]
-                action_width = action[..., -1]
-                # safety insurance（base 坐标工作空间）
-                action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
-                step_action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)   # (dim,)
-
-                #if t % query_frequency == 0:
                     ### post-process actions
-                raw_action = raw_action.squeeze(0).cpu().numpy()
-                action = post_process(raw_action)
-                #target_qpos = action
-                
-                # 训练数据的 tcp 是 base 坐标系
-                # 预测 action 即为 base 坐标，无需 project_tcp_to_base_coord 投影。
-                action_tcp = action[..., :-1]
-                action_width = action[..., -1]
-                
-                # safety insurance（base 坐标工作空间）
-                action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
-                # full actions
-                step_action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
-                # add to ensemble buffer
-                #ensemble_buffer.add_action(action, t)
+                    raw_action = all_actions.squeeze(1).cpu().numpy()  # (chunk_size, state_dim)
+                    action = post_process(raw_action)
+                    # 训练数据的 tcp 是 base 坐标系，预测 action 即为 base 坐标
+                    #但
+                    with open(os.path.join(scene_path,fold_name,f"actions_predict.npy"),'wb')  as f:
+                            np.save(f,action)
+                    
 
-                print(f't={t},shape of action: {action.shape}')
-                ### step the environment
-                #ts = env.step(target_qpos)
-                # get step action from ensemble buffer
-                #step_action = ensemble_buffer.get_action()
-                if step_action is None:   # no action in the buffer => no movement.
-                    print(f'[warn] t={t}: ensemble buffer is empty, skipping step.')
-                    continue
-                print(f'step_action: {step_action}')
+                    print(f'task={i},shape of action: {action.shape}')
+                    
 
-                if config.get('visual', False):
-                    pred_traj.append(step_action.copy())
+                    if config.get('visual', False):
+                        pred_traj.append(action.copy())
 
-                step_tcp = step_action[:-1] 
-                step_width = step_action[-1] 
-                # send tcp pose to robot
-                if config['discretize_rotation']:
-                    rot_steps = discretize_rotation(last_rot, step_tcp[3:], np.pi / 16)
-                    last_rot = step_tcp[3:]
-                    for rot in rot_steps:
-                        step_tcp[3:] = rot
-                        agent_master.set_tcp_pose(
-                            step_tcp, 
-                            rotation_rep = "rotation_6d", 
-                            blocking = True
-                        )
-                else:
-                    agent_master.set_tcp_pose(
-                        step_tcp,
-                        rotation_rep = "rotation_6d",
-                        blocking = True
-                    )
-                
-                #send gripper width to gripper (thresholding to avoid repeating sending signals to gripper)
-                if step_width <= 0.02:
-                    step_width = 0.0
-                if prev_width is None or abs(prev_width - step_width) > GRIPPER_THRESHOLD:
-                    agent_master.set_gripper_width(step_width, blocking = True)
-                    prev_width = step_width
-                
-                ### for visualization
-                #target_qpos_list.append(target_qpos)
-                #rewards.append(ts.reward)
+                    
 
-            plt.close()
+                #plt.close()
         
 
-        rewards = np.array(rewards)
-        episode_return = np.sum(rewards[rewards!=None])
-        episode_returns.append(episode_return)
+        #rewards = np.array(rewards)
+        #episode_return = np.sum(rewards[rewards!=None])
+        #episode_returns.append(episode_return)
         
-        if save_episode:
-            save_videos(image_list, DT, video_path=os.path.join(ckpt_dir, f'video{rollout_id}.mp4'))
+        # if save_episode:
+        #     save_videos(image_list, DT, video_path=os.path.join(ckpt_dir, f'video{rollout_id}.mp4'))
 
         # --visual：评估结束后把收集的预测轨迹画成 3D 图（不发控制，仅可视化）
         if config.get('visual', False) and pred_traj:
-            pred_traj_arr = np.array(pred_traj)   # (T,10): xyz + rot6d + width
+            pred_traj_arr = np.array(pred_traj)   # (N, chunk_size, 10): xyz + rot6d + width
             import matplotlib
             matplotlib.use('Agg')
             import matplotlib.pyplot as plt
             fig = plt.figure(figsize=(12, 9))
             ax = fig.add_subplot(111, projection='3d')
-            ax.plot(pred_traj_arr[:, 0], pred_traj_arr[:, 1], pred_traj_arr[:, 2],
-                    'r-', lw=2.5, label='pred (no control)')
-            sc = ax.scatter(pred_traj_arr[:, 0], pred_traj_arr[:, 1], pred_traj_arr[:, 2],
-                            c=pred_traj_arr[:, -1], cmap='coolwarm', vmin=0, vmax=0.095)
+            # 每个观测对应一条 chunk_size 长度的未来预测轨迹
+            for k, chunk in enumerate(pred_traj_arr):
+                ax.plot(chunk[:, 0], chunk[:, 1], chunk[:, 2], lw=1.5, alpha=0.8)
+            # 用最后一条 chunk 的散点 + colorbar 表达夹爪宽度
+            last = pred_traj_arr[-1]
+            sc = ax.scatter(last[:, 0], last[:, 1], last[:, 2],
+                            c=last[:, -1], cmap='coolwarm', vmin=0, vmax=0.095)
             fig.colorbar(sc, ax=ax, label='gripper width (m)')
             ax.set_xlabel('x (m)'); ax.set_ylabel('y (m)'); ax.set_zlabel('z (m)')
-            ax.legend()
             ax.set_title(f'Predicted traj (visual) - {ckpt_name}')
             out_png = os.path.join(ckpt_dir, f'pred_traj_visual{rollout_id}.png')
             fig.savefig(out_png, dpi=110, bbox_inches='tight')
             plt.close(fig)
-            print(f'[visual] 预测轨迹已保存: {out_png}')
+            print(f'[visual] 预测轨迹已保存: {out_png}  ({len(pred_traj)} chunks)')
 
-    #success_rate = np.mean(np.array(highest_rewards) == env_max_reward)
-    avg_return = np.mean(episode_returns)
+
+    #avg_return = np.mean(episode_returns)
     
-    return  avg_return
+    #return  avg_return
 
 
 def forward_pass(data, policy):

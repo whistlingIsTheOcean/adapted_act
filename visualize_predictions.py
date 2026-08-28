@@ -214,12 +214,9 @@ def synthesize_ensemble(policy, demo_dir, camera_names, frame_ids, action,
     buffer = np.zeros((max_t, max_t + num_queries, action.shape[1]))
     exec_traj = np.zeros((max_t, action.shape[1]))
     for t in range(max_t):
-        qpos = action[start_ts + t]
         images = load_images(demo_dir, camera_names, frame_ids, start_ts + t)
-        qpos_norm = (qpos - stats['qpos_mean']) / stats['qpos_std']
-        qpos_t = torch.from_numpy(qpos_norm).float().to(device).unsqueeze(0)
         with torch.inference_mode():
-            a_hat = policy(qpos_t, images.unsqueeze(0).to(device))[0].cpu().numpy()
+            a_hat = policy(images.unsqueeze(0).to(device))[0].cpu().numpy()
         a = a_hat * stats['action_std'] + stats['action_mean']      # (chunk,10)
         buffer[t, t:t + num_queries] = a
         # 聚合第 t 步：所有覆盖 t 的预测按发起时刻越新权重越大
@@ -243,7 +240,7 @@ def main():
     parser.add_argument('--temporal_agg', action='store_true',
                         help='合成 temporal ensembling 后的"实际执行轨迹"再对比（模拟真机 --temporal_agg）')
     parser.add_argument('--save_dir', type=str, default='', help='非空则无头渲染 png；留空且有显示则 open3d 交互')
-    parser.add_argument('--chunk_size', type=int, default=100)
+    parser.add_argument('--chunk_size', type=int, default=20)
     parser.add_argument('--hidden_dim', type=int, default=512)
     parser.add_argument('--dim_feedforward', type=int, default=3200)
     parser.add_argument('--kl_weight', type=int, default=10)
@@ -316,12 +313,9 @@ def main():
             real = action[max(0, ts - 1):][:len(pred)]
         else:
             # 单次前向：模型在 ts 时刻一次性预测的未来 chunk
-            qpos = action[ts]
             images = load_images(demo_dir, task_cfg['camera_names'], frame_ids, ts)
-            qpos_norm = (qpos - stats['qpos_mean']) / stats['qpos_std']
-            qpos_t = torch.from_numpy(qpos_norm).float().to(device).unsqueeze(0)
             with torch.inference_mode():
-                a_hat = policy(qpos_t, images.unsqueeze(0).to(device))[0].cpu().numpy()
+                a_hat = policy(images.unsqueeze(0).to(device))[0].cpu().numpy()
             pred = a_hat * stats['action_std'] + stats['action_mean']   # (chunk, 10)
             # 真实轨迹（与训练一致的 start_ts-1 hack）
             real = action[max(0, ts - 1):]

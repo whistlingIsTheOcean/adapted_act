@@ -91,9 +91,6 @@ class EpisodicDataset(torch.utils.data.Dataset):
         all_tcp_data=xyz_rot_transform(all_tcp_data, from_rep = "quaternion", to_rep = "rotation_6d")
         all_action_data = np.concatenate((all_tcp_data, all_gripper_data[..., np.newaxis]), axis = -1)# (N, 10)
         
-        # get observation at start_ts only
-        qpos=all_action_data[start_ts]
-
         image_dict = dict()
         
         # 对于全局相机，时间戳与图片对应；对于腕部相机，找到当前start ts索引的时间戳最近的时间戳的图像
@@ -128,7 +125,6 @@ class EpisodicDataset(torch.utils.data.Dataset):
 
         # construct observations
         image_data = torch.from_numpy(all_cam_images)
-        qpos_data = torch.from_numpy(qpos).float()
         action_data = torch.from_numpy(padded_action).float()
         is_pad = torch.from_numpy(is_pad).bool()
 
@@ -140,9 +136,8 @@ class EpisodicDataset(torch.utils.data.Dataset):
         # norm_stats 是 numpy(float64)，混算会把 float32 张量提升成 float64，
         # 喂给 float32 的 nn.Linear 会错
         action_data = ((action_data - self.norm_stats["action_mean"]) / self.norm_stats["action_std"]).float()
-        qpos_data = ((qpos_data - self.norm_stats["qpos_mean"]) / self.norm_stats["qpos_std"]).float()
 
-        return image_data, qpos_data, action_data, is_pad
+        return image_data, action_data, is_pad
 
 
 def get_norm_stats(dataset_dir, num_episodes,split,cam_ids):
@@ -190,22 +185,10 @@ def get_norm_stats(dataset_dir, num_episodes,split,cam_ids):
     action_std = all_action_data.std(axis=0,keepdims=True)
     action_std = np.clip(action_std, 1e-2, np.inf) # clipping
 
-    # normalize qpos data
-    #qpos_mean = all_qpos_data.mean(dim=[0, 1], keepdim=True)
-    #qpos_std = all_qpos_data.std(dim=[0, 1], keepdim=True)
-    #qpos_std = torch.clip(qpos_std, 1e-2, np.inf) # clipping
-    qpos_mean=action_mean.copy()
-    qpos_std=action_std.copy()
+    stats = {"action_mean": action_mean.squeeze(), "action_std": action_std.squeeze()}
 
-    qpos=all_action_data[0]
-    
-    stats = {"action_mean": action_mean.squeeze(), "action_std": action_std.squeeze(),
-             "qpos_mean": qpos_mean.squeeze(), "qpos_std": qpos_std.squeeze(),
-             "example_qpos": qpos}
-    
     print("action_mean shape:", action_mean.shape)  # (10,)
     print("action_std shape:", action_std.shape)    
-    print("example_qpos shape:", qpos.shape) 
 
     return stats
 

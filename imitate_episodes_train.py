@@ -15,7 +15,7 @@ from utils_act import sample_box_pose, sample_insertion_pose # robot functions
 from utils_act import compute_dict_mean, set_seed, detach_dict,decode_gripper_width # helper functions
 from policy import ACTPolicy, CNNMLPPolicy
 from visualize_episodes import save_videos
-
+#import torch.distributed as dist
 
 
 #控制我们的机器
@@ -29,6 +29,10 @@ import IPython
 e = IPython.embed
 
 def main(args):
+    
+
+
+    
     set_seed(1)
     # command line parameters
     is_eval = args['eval']
@@ -104,39 +108,21 @@ def main(args):
     
     
     if is_eval:
-        # 读取训练时保存的 max_episode_len
-        #max_len_path = os.path.join(ckpt_dir, 'max_episode_len.txt')
-        max_episode_len =188 #代码需要改变存放位置，所以硬编码罢
-        config['episode_len'] = max_episode_len
-
-        # if os.path.exists(max_len_path):
-        #     with open(max_len_path, 'r') as f:
-        #         config['episode_len'] = int(f.read().strip())
-        #     print(f'评估 episode_len = {config["episode_len"]} (来自 {max_len_path})')
-        # else:
-        #     print(f'[warn] 未找到 {max_len_path}，使用默认 episode_len = {config["episode_len"]}')
-
-        ckpt_names = [f'policy_best.ckpt']
-        results = []
-        for ckpt_name in ckpt_names:
-            avg_return = eval_bc(config, ckpt_name, save_episode=True)
-            results.append([ckpt_name,  avg_return])
-
-        for ckpt_name,  avg_return in results:
-            print(f'{ckpt_name}:  {avg_return=}')
-        print()
+        
         exit()
 
     train_dataloader, val_dataloader, stats, _ ,max_episode_len= load_data(dataset_dir, num_episodes, camera_names, batch_size_train, batch_size_val)
     config['episode_len']=max_episode_len
+
+    # 先确保 ckpt_dir 存在，再写文件（否则新目录首次训练会 FileNotFoundError）
+    if not os.path.isdir(ckpt_dir):
+        os.makedirs(ckpt_dir)
     #保存加载数据集时统计出的max_episode_len,
     # TODO 在评估前把这个参数传进args
     with open(os.path.join(ckpt_dir,"max_episode_len.txt"),'w')  as f:
         f.write(str(max_episode_len))
 
     # save dataset stats
-    if not os.path.isdir(ckpt_dir):
-        os.makedirs(ckpt_dir)
     stats_path = os.path.join(ckpt_dir, f'dataset_stats.pkl')
     with open(stats_path, 'wb') as f:
         pickle.dump(stats, f)
@@ -180,228 +166,7 @@ def get_image(obs_dict,camera_names):
     return curr_image
 
 
-def eval_bc(config, ckpt_name, save_episode=True):
-    set_seed(1000)
-    ckpt_dir = config['ckpt_dir']
-    state_dim = config['state_dim']
-    real_robot = config['real_robot']
-    policy_class = config['policy_class']
-    onscreen_render = config['onscreen_render']
-    policy_config = config['policy_config']
-    camera_names = config['camera_names']
-    max_timesteps = config['episode_len']-1+20#多20步冗余用来容错
-    task_name = config['task_name']
-    temporal_agg = config['temporal_agg']
-    onscreen_cam = 'angle'
 
-    # load policy and stats
-    ckpt_path = os.path.join(ckpt_dir, ckpt_name)
-    policy = make_policy(policy_class, policy_config)
-    loading_status = policy.load_state_dict(torch.load(ckpt_path))
-    print(loading_status)
-    policy.cuda()
-    policy.eval()
-    print(f'Loaded: {ckpt_path}')
-    stats_path = os.path.join(ckpt_dir, f'dataset_stats.pkl')
-    with open(stats_path, 'rb') as f:
-        stats = pickle.load(f)
-
-    post_process = lambda a: a * stats['action_std'] + stats['action_mean']
-
-    #load environment
-    agent_master = Agent(
-        robot_ip = "192.168.2.100",
-        pc_ip = "192.168.2.35",
-        gripper_port = "/dev/ttyUSB0",
-        camera_serial = camera_names[0]
-    )
-    agent_slave = Agent_slave(
-        camera_serial = camera_names[1]
-    )
-
-    if config['discretize_rotation']:
-        last_rot = np.array(agent_master.ready_rot_6d, dtype = np.float32)
-
-    
-    # 不再使用 ensemble_buffer：每步 post_process 后直接执行（等价原版 ACT）
-
-    #projector = Projector(config['calib'])
-    #ensemble_buffer = EnsembleBuffer(mode = config['ensemble_mode'])
-
-    
-
-    query_frequency = int(policy_config['num_queries']/5)
-    if temporal_agg:
-        query_frequency = 1
-        num_queries = policy_config['num_queries']
-
-    max_timesteps = int(max_timesteps * 1) # may increase for real-world tasks
-
-    #真机只做一次实验
-    prev_width = None
-    num_rollouts = 1
-    episode_returns = []
-    highest_rewards = []
-    for rollout_id in range(num_rollouts):
-        rollout_id += 0
-        
-
-        ### no onscreen render
-        
-
-        ### evaluation loop
-        if temporal_agg:
-            all_time_actions = torch.zeros([max_timesteps, max_timesteps+num_queries, state_dim]).cuda()
-        
-        rewards = []
-        obs_dict={}
-        qpos_history = torch.zeros((1, max_timesteps, state_dim)).cuda()
-        image_list = [] # for visualization
-        qpos_list = []
-        target_qpos_list = []
-        #rewards = []
-        pred_traj = []   # --visual 时收集预测轨迹（无 visual 时空列表，不 append 不画图）
-        with torch.inference_mode():
-            for t in range(max_timesteps):
-                
-                
-                obs_dict['images']={}
-                master_image,_=agent_master.get_observation()
-                slave_image,_=agent_slave.get_observation()
-                obs_dict['images'][camera_names[0]]=master_image
-                obs_dict['images'][camera_names[1]]=slave_image
-                image_list.append(obs_dict['images'])
-                
-                curr_image = get_image(obs_dict['images'], camera_names)
-
-                ### query policy
-                if config['policy_class'] == "ACT":
-                    if t % query_frequency == 0:
-                        all_actions = policy(curr_image)
-                    if temporal_agg:
-                        all_time_actions[[t], t:t+num_queries] = all_actions
-                        actions_for_curr_step = all_time_actions[:, t]
-                        actions_populated = torch.all(actions_for_curr_step != 0, axis=1)
-                        actions_for_curr_step = actions_for_curr_step[actions_populated]
-                        k = 0.01
-                        exp_weights = np.exp(-k * np.arange(len(actions_for_curr_step)))
-                        exp_weights = exp_weights / exp_weights.sum()
-                        exp_weights = torch.from_numpy(exp_weights).cuda().unsqueeze(dim=1)
-                        raw_action = (actions_for_curr_step * exp_weights).sum(dim=0, keepdim=True)
-                    else:
-                        raw_action = all_actions[:, t % query_frequency]
-                elif config['policy_class'] == "CNNMLP":
-                    raise NotImplementedError
-                else:
-                    raise NotImplementedError
-
-                ### post-process actions（每步执行，等价原版 ACT；不再经过 ensemble_buffer）
-                raw_action = raw_action.squeeze(0).cpu().numpy()
-                action = post_process(raw_action)
-                # 训练数据的 tcp 是 base 坐标系，预测 action 即为 base 坐标，无需投影
-                action_tcp = action[..., :-1]
-                action_width = action[..., -1]
-                # safety insurance（base 坐标工作空间）
-                action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
-                step_action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)   # (dim,)
-
-                #if t % query_frequency == 0:
-                    ### post-process actions
-                raw_action = raw_action.squeeze(0).cpu().numpy()
-                action = post_process(raw_action)
-                #target_qpos = action
-                
-                # 训练数据的 tcp 是 base 坐标系
-                # 预测 action 即为 base 坐标，无需 project_tcp_to_base_coord 投影。
-                action_tcp = action[..., :-1]
-                action_width = action[..., -1]
-                
-                # safety insurance（base 坐标工作空间）
-                action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
-                # full actions
-                step_action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
-                # add to ensemble buffer
-                #ensemble_buffer.add_action(action, t)
-
-                print(f't={t},shape of action: {action.shape}')
-                ### step the environment
-                #ts = env.step(target_qpos)
-                # get step action from ensemble buffer
-                #step_action = ensemble_buffer.get_action()
-                if step_action is None:   # no action in the buffer => no movement.
-                    print(f'[warn] t={t}: ensemble buffer is empty, skipping step.')
-                    continue
-                print(f'step_action: {step_action}')
-
-                if config.get('visual', False):
-                    pred_traj.append(step_action.copy())
-
-                step_tcp = step_action[:-1] 
-                step_width = step_action[-1] 
-                # send tcp pose to robot
-                if config['discretize_rotation']:
-                    rot_steps = discretize_rotation(last_rot, step_tcp[3:], np.pi / 16)
-                    last_rot = step_tcp[3:]
-                    for rot in rot_steps:
-                        step_tcp[3:] = rot
-                        agent_master.set_tcp_pose(
-                            step_tcp, 
-                            rotation_rep = "rotation_6d", 
-                            blocking = True
-                        )
-                else:
-                    agent_master.set_tcp_pose(
-                        step_tcp,
-                        rotation_rep = "rotation_6d",
-                        blocking = True
-                    )
-                
-                #send gripper width to gripper (thresholding to avoid repeating sending signals to gripper)
-                if step_width <= 0.02:
-                    step_width = 0.0
-                if prev_width is None or abs(prev_width - step_width) > GRIPPER_THRESHOLD:
-                    agent_master.set_gripper_width(step_width, blocking = True)
-                    prev_width = step_width
-                
-                ### for visualization
-                #target_qpos_list.append(target_qpos)
-                #rewards.append(ts.reward)
-
-            plt.close()
-        
-
-        rewards = np.array(rewards)
-        episode_return = np.sum(rewards[rewards!=None])
-        episode_returns.append(episode_return)
-        
-        if save_episode:
-            save_videos(image_list, DT, video_path=os.path.join(ckpt_dir, f'video{rollout_id}.mp4'))
-
-        # --visual：评估结束后把收集的预测轨迹画成 3D 图（不发控制，仅可视化）
-        if config.get('visual', False) and pred_traj:
-            pred_traj_arr = np.array(pred_traj)   # (T,10): xyz + rot6d + width
-            import matplotlib
-            matplotlib.use('Agg')
-            import matplotlib.pyplot as plt
-            fig = plt.figure(figsize=(12, 9))
-            ax = fig.add_subplot(111, projection='3d')
-            ax.plot(pred_traj_arr[:, 0], pred_traj_arr[:, 1], pred_traj_arr[:, 2],
-                    'r-', lw=2.5, label='pred (no control)')
-            sc = ax.scatter(pred_traj_arr[:, 0], pred_traj_arr[:, 1], pred_traj_arr[:, 2],
-                            c=pred_traj_arr[:, -1], cmap='coolwarm', vmin=0, vmax=0.095)
-            fig.colorbar(sc, ax=ax, label='gripper width (m)')
-            ax.set_xlabel('x (m)'); ax.set_ylabel('y (m)'); ax.set_zlabel('z (m)')
-            ax.legend()
-            ax.set_title(f'Predicted traj (visual) - {ckpt_name}')
-            out_png = os.path.join(ckpt_dir, f'pred_traj_visual{rollout_id}.png')
-            fig.savefig(out_png, dpi=110, bbox_inches='tight')
-            plt.close(fig)
-            print(f'[visual] 预测轨迹已保存: {out_png}')
-
-    #success_rate = np.mean(np.array(highest_rewards) == env_max_reward)
-    avg_return = np.mean(episode_returns)
-    
-    return  avg_return
 
 
 def forward_pass(data, policy):

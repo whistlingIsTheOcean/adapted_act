@@ -7,10 +7,10 @@ python imitate_episodes.py \
   --ckpt_dir /home/ubuntu/yuxuan/adapted_act/ckpt \
   --policy_class ACT \
   --task_name real_data \
-  --batch_size 8 \
+  --batch_size 16 \
   --seed 0 \
   --num_epochs 2000 \
-  --lr 1e-5 \
+  --lr 2e-5 \
   --kl_weight 10 \
   --chunk_size 20 \
   --hidden_dim 512 \
@@ -21,16 +21,10 @@ python imitate_episodes.py \
 
 #train from zero
 
-python imitate_episodes.py \
+python imitate_episodes_train.py \
   --task_name real_data \
-<<<<<<< HEAD
-  --ckpt_dir /data_local/yuxuan/ckpt_act_realdata_0710 \
+  --ckpt_dir /data/yuxuan/ckpt_0827 \
   --policy_class ACT --kl_weight 10 --chunk_size 20 --hidden_dim 512 \
-  --batch_size 8 --dim_feedforward 3200 \
+  --batch_size 16 --dim_feedforward 3200 \
   --num_epochs 2000 --lr 1e-5 --seed 0 --state_dim 10
-=======
-  --ckpt_dir /home/ubuntu/yuxuan/adapted_act/ckpt \
-  --policy_class ACT --kl_weight 10 --chunk_size 100 --hidden_dim 512 \
-  --batch_size 8 --dim_feedforward 3200 \
-  --num_epochs 2000 --lr 1e-5 --seed 0 
->>>>>>> 3a51334742b082b0117d799d44422069611f028a
+

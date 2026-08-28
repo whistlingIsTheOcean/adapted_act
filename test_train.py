@@ -65,7 +65,7 @@ def test_data():
         BATCH, BATCH)
 
     # 归一化统计量形状
-    for k in ['action_mean', 'action_std', 'qpos_mean', 'qpos_std']:
+    for k in ['action_mean', 'action_std']:
         v = np.asarray(stats[k])
         print(f"  stats['{k}'] shape={v.shape}")
         assert v.shape == (10,), f"stats['{k}'] 应为 (10,)，实际 {v.shape}"
@@ -73,9 +73,8 @@ def test_data():
     print(f"  max_episode_len = {max_len}")
 
     # 取一个 batch，核对形状
-    image, qpos, action, is_pad = next(iter(train_dl))
+    image, action, is_pad = next(iter(train_dl))
     print(f"  image  {tuple(image.shape)}  dtype={image.dtype}")
-    print(f"  qpos   {tuple(qpos.shape)}  dtype={qpos.dtype}")
     print(f"  action {tuple(action.shape)}  dtype={action.dtype}")
     print(f"  is_pad {tuple(is_pad.shape)}  dtype={is_pad.dtype}")
 
@@ -83,7 +82,6 @@ def test_data():
     assert ncam == len(cfg['camera_names']) == 2, "相机数应为 2"
     assert ch == 3, "图像通道应为 3"
     assert image.min() >= 0 and image.max() <= 1, "图像应已 /255 归一化到 [0,1]"
-    assert qpos.shape[1] == 10, "qpos 维度应为 10 (xyz3+rot6d+width1)"
     assert action.shape[1] == max_len - 1 and action.shape[2] == 10
     assert is_pad.shape == (bs, max_len - 1)
     assert torch_isfinite(action), "action 含 NaN/Inf"
@@ -117,12 +115,11 @@ def test_model():
     policy.train()
 
     bs, chunk, h, w = BATCH, 8, 128, 128
-    qpos = torch.randn(bs, 10, device='cuda')
     image = torch.rand(bs, 2, 3, h, w, device='cuda')          # 0~1 图像
     action = torch.randn(bs, chunk, 10, device='cuda')
     is_pad = torch.zeros(bs, chunk, dtype=torch.bool, device='cuda')
 
-    loss_dict = policy(qpos, image, action, is_pad)
+    loss_dict = policy(image, action, is_pad)
     loss = loss_dict['loss']
     print(f"  loss={loss.item():.4f}  l1={loss_dict['l1'].item():.4f}  "
           f"kl={loss_dict['kl'].item():.4f}")
