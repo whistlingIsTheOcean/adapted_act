@@ -305,24 +305,6 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
                 step_action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)   # (dim,)
 
-                #if t % query_frequency == 0:
-                    ### post-process actions
-                raw_action = raw_action.squeeze(0).cpu().numpy()
-                action = post_process(raw_action)
-                #target_qpos = action
-                
-                # 训练数据的 tcp 是 base 坐标系
-                # 预测 action 即为 base 坐标，无需 project_tcp_to_base_coord 投影。
-                action_tcp = action[..., :-1]
-                action_width = action[..., -1]
-                
-                # safety insurance（base 坐标工作空间）
-                action_tcp[..., :3] = np.clip(action_tcp[..., :3], SAFE_WORKSPACE_MIN + SAFE_EPS, SAFE_WORKSPACE_MAX - SAFE_EPS)
-                # full actions
-                step_action = np.concatenate([action_tcp, action_width[..., np.newaxis]], axis = -1)
-                # add to ensemble buffer
-                #ensemble_buffer.add_action(action, t)
-
                 print(f't={t},shape of action: {action.shape}')
                 ### step the environment
                 #ts = env.step(target_qpos)
