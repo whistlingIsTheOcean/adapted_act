@@ -10,12 +10,13 @@ python imitate_episodes.py \
   --batch_size 16 \
   --seed 0 \
   --num_epochs 2000 \
-  --lr 2e-5 \
+  --lr 1e-5 \
   --kl_weight 10 \
   --chunk_size 20 \
   --hidden_dim 512 \
   --dim_feedforward 3200 \
   --temporal_agg \
+  
   --ensemble_mode new --visual --discretize_rotation
 
 

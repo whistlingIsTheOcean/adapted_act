@@ -19,7 +19,7 @@ from visualize_episodes import save_videos
 
 
 #控制我们的机器
-# from eval_agent import Agent,Agent_slave
+from eval_agent import Agent,Agent_slave
 from utils.constants import *
 from dataset.projector import Projector
 from utils.ensemble import EnsembleBuffer
@@ -106,7 +106,7 @@ def main(args):
     if is_eval:
         # 读取训练时保存的 max_episode_len
         #max_len_path = os.path.join(ckpt_dir, 'max_episode_len.txt')
-        max_episode_len =188 #代码需要改变存放位置，所以硬编码罢
+        max_episode_len =158 #代码需要改变存放位置，所以硬编码罢
         config['episode_len'] = max_episode_len
 
         # if os.path.exists(max_len_path):
