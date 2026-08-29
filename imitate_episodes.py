@@ -189,7 +189,8 @@ def eval_bc(config, ckpt_name, save_episode=True):
     onscreen_render = config['onscreen_render']
     policy_config = config['policy_config']
     camera_names = config['camera_names']
-    max_timesteps = config['episode_len']-1+20#多20步冗余用来容错
+    max_timesteps =1e4 #config['episode_len']-1+20#
+    #真机测试取消步数上限
     task_name = config['task_name']
     temporal_agg = config['temporal_agg']
     onscreen_cam = 'angle'
@@ -349,7 +350,7 @@ def eval_bc(config, ckpt_name, save_episode=True):
                 #target_qpos_list.append(target_qpos)
                 #rewards.append(ts.reward)
 
-            plt.close()
+            #plt.close()
         
 
         rewards = np.array(rewards)
